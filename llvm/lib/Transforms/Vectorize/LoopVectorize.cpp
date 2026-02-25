@@ -6378,6 +6378,16 @@ bool VPRecipeBuilder::replaceWithFinalIfReductionStore(
   return false;
 }
 
+bool VPRecipeBuilder::isConsecutiveWithoutVPlanBasedStrideSpeculation(
+    VPInstruction *MemOp) {
+  auto *I = MemOp->getUnderlyingInstr();
+  auto *PtrOp = getLoadStorePointerOperand(I);
+  auto *ScalarTy = MemOp->getOpcode() == Instruction::Load
+                       ? I->getType()
+                       : I->getOperand(0)->getType();
+  return Legal->isConsecutivePtr(ScalarTy, PtrOp);
+}
+
 VPSingleDefRecipe *VPRecipeBuilder::handleReplication(VPInstruction *VPI,
                                                       VFRange &Range) {
   auto *I = VPI->getUnderlyingInstr();
@@ -6733,7 +6743,7 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlan(VPlanPtr Plan,
                         OrigLoop);
 
   RUN_VPLAN_PASS(VPlanTransforms::makeMemOpWideningDecisions, *Plan, Range,
-                 RecipeBuilder);
+                 RecipeBuilder, CostCtx);
 
   RUN_VPLAN_PASS(VPlanTransforms::makeScalarizationDecisions, *Plan, Range);
 

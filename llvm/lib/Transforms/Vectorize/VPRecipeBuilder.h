@@ -33,11 +33,6 @@ class VPRecipeBuilder {
 
   VPBuilder &Builder;
 
-  /// Check if \p I can be widened at the start of \p Range and possibly
-  /// decrease the range such that the returned value holds for the entire \p
-  /// Range. The function should not be called for memory instructions or calls.
-  bool shouldWiden(Instruction *I, VFRange &Range) const;
-
   /// Optimize the special case where the operand of \p VPI is a constant
   /// integer induction variable.
   VPWidenIntOrFpInductionRecipe *
@@ -52,6 +47,11 @@ public:
   VPRecipeBuilder(VPlan &Plan, LoopVectorizationLegality *Legal,
                   LoopVectorizationCostModel &CM, VPBuilder &Builder)
       : Plan(Plan), Legal(Legal), CM(CM), Builder(Builder) {}
+
+  /// Check if \p I can be widened at the start of \p Range and possibly
+  /// decrease the range such that the returned value holds for the entire \p
+  /// Range. The function should not be called for memory instructions or calls.
+  bool shouldWiden(Instruction *I, VFRange &Range) const;
 
   /// Create and return a widened recipe for a non-phi recipe \p R if one can be
   /// created within the given VF \p Range.
@@ -82,6 +82,8 @@ public:
   /// predicated, add the mask as last operand. Range.End may be decreased to
   /// ensure same recipe behavior  from \p Range.Start to \p Range.End.
   VPSingleDefRecipe *handleReplication(VPInstruction *VPI, VFRange &Range);
+
+  bool isConsecutiveWithoutVPlanBasedStrideSpeculation(VPInstruction *MemOp);
 };
 } // end namespace llvm
 
