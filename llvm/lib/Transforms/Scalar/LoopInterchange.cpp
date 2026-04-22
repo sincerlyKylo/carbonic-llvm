@@ -1666,9 +1666,40 @@ int LoopInterchangeProfitability::getInstrOrderCost() {
       std::optional<const SCEV *> InnerCoeff =
           getAddRecCoefficient(*SE, Access, InnerLoop);
 
-      if (!OuterCoeff.has_value() || !*OuterCoeff || !InnerCoeff.has_value() ||
-          !*InnerCoeff)
+      if (!OuterCoeff.has_value() || !InnerCoeff.has_value())
         continue;
+
+      if (!*OuterCoeff && !*InnerCoeff)
+        continue;
+
+      if (!*OuterCoeff && *InnerCoeff) {
+        // If we find a coefficient for the inner loop but no coefficient for
+        // the outer loop, then the access is of the form like:
+        //
+        //   for (i=0; i<N; i++)
+        //     for (j=0; j<M; j++)
+        //       A[j] = ...;
+        //
+        // In this case, we treat it as a bad order, since interchanging the
+        // loops would make the access loop invariant with respect to the inner
+        // loop (the i-loop), which would improve locality.
+        BasePtr2Score[BasePtr].second = true;
+        continue;
+      }
+
+      if (*OuterCoeff && !*InnerCoeff) {
+        // If we find a coefficient for the outer loop but no coefficient for
+        // the inner loop, then the access is of the form like:
+        //
+        //   for (i=0; i<N; i++)
+        //     for (j=0; j<M; j++)
+        //       A[i] = ...;
+        //
+        // Due to the same reason as the previous case, we regard it as a good
+        // order.
+        BasePtr2Score[BasePtr].first = true;
+        continue;
+      }
 
       // This heuristic assumes that a smaller step recurrence implies that the
       // induction variable corresponding to the loop is used in the inner
