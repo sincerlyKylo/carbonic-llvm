@@ -8127,6 +8127,132 @@ TEST_F(OpenMPIRBuilderTest, EmitOffloadingArraysArguments) {
   EXPECT_EQ(RTArgs.MapNamesArray->getType(), VoidPtrPtrTy);
 }
 
+TEST_F(OpenMPIRBuilderTest, EmitDynamicOffloadingArraysMapEntries) {
+  OpenMPIRBuilder OMPBuilder(*M);
+  OMPBuilder.Config.setIsGPU(true);
+  OMPBuilder.initialize();
+  IRBuilder<> Builder(BB);
+
+  AllocaInst *StaticPtr =
+      Builder.CreateAlloca(Builder.getInt32Ty(), nullptr, "static.ptr");
+  AllocaInst *DynamicPtr0 =
+      Builder.CreateAlloca(Builder.getInt64Ty(), nullptr, "dynamic.ptr.0");
+  AllocaInst *DynamicPtr1 =
+      Builder.CreateAlloca(Builder.getInt8Ty(), nullptr, "dynamic.ptr.1");
+
+  OpenMPIRBuilder::MapInfosTy CombinedInfo;
+  CombinedInfo.BasePointers.push_back(StaticPtr);
+  CombinedInfo.Pointers.push_back(StaticPtr);
+  CombinedInfo.DevicePointers.push_back(OpenMPIRBuilder::DeviceInfoTy::None);
+  CombinedInfo.Sizes.push_back(Builder.getInt64(4));
+  CombinedInfo.Types.push_back(omp::OpenMPOffloadMappingFlags::OMP_MAP_TO);
+  CombinedInfo.Names.push_back(
+      Builder.CreateGlobalString("static", "static_name", 0, M.get()));
+
+  OpenMPIRBuilder::TargetDataInfo Info(false, false);
+  Info.TotalMapCount = Builder.getInt64(3);
+  OpenMPIRBuilder::TargetDataRTArgs RTArgs;
+  using InsertPointTy = OpenMPIRBuilder::InsertPointTy;
+
+  auto mapTypeValue = [&](omp::OpenMPOffloadMappingFlags Flags) {
+    return Builder.getInt64(
+        static_cast<std::underlying_type_t<omp::OpenMPOffloadMappingFlags>>(
+            Flags));
+  };
+  omp::OpenMPOffloadMappingFlags ToFromMapType =
+      static_cast<omp::OpenMPOffloadMappingFlags>(
+          omp::OpenMPOffloadMappingFlags::OMP_MAP_TO |
+          omp::OpenMPOffloadMappingFlags::OMP_MAP_FROM);
+
+  bool DynamicCBWasCalled = false;
+  auto DynamicMapEntriesCB =
+      [&](InsertPointTy CodeGenIP,
+          OpenMPIRBuilder::TargetDataRTArgs &DynamicRTArgs,
+          unsigned StaticCount) -> Error {
+    DynamicCBWasCalled = true;
+    EXPECT_EQ(StaticCount, 1U);
+    Builder.restoreIP(CodeGenIP);
+    OMPBuilder.emitOffloadingArraysMapEntry(
+        Builder, DynamicRTArgs, Info, Builder.getInt64(StaticCount),
+        DynamicPtr0, DynamicPtr0, Builder.getInt64(8),
+        mapTypeValue(omp::OpenMPOffloadMappingFlags::OMP_MAP_FROM));
+    OMPBuilder.emitOffloadingArraysMapEntry(
+        Builder, DynamicRTArgs, Info, Builder.getInt64(StaticCount + 1),
+        DynamicPtr1, DynamicPtr1, Builder.getInt64(1),
+        mapTypeValue(ToFromMapType));
+    return Error::success();
+  };
+
+  EXPECT_FALSE(OMPBuilder.emitOffloadingArraysAndArgs(
+      InsertPointTy(Builder.saveIP()), InsertPointTy(Builder.saveIP()), Info,
+      RTArgs, CombinedInfo,
+      [](unsigned) -> Expected<Function *> {
+        return static_cast<Function *>(nullptr);
+      },
+      /*IsNonContiguous=*/false, /*ForEndCall=*/false,
+      /*DeviceAddrCB=*/nullptr, DynamicMapEntriesCB));
+
+  EXPECT_TRUE(DynamicCBWasCalled);
+  EXPECT_EQ(Info.NumberOfPtrs, 1U);
+  EXPECT_TRUE(Info.isValid());
+
+  auto expectDynamicAlloca = [](Value *V, Type *AllocatedTy) {
+    auto *AI = dyn_cast<AllocaInst>(V);
+    EXPECT_NE(AI, nullptr);
+    if (!AI)
+      return AI;
+    EXPECT_EQ(AI->getAllocatedType(), AllocatedTy);
+    auto *Size = dyn_cast<ConstantInt>(AI->getArraySize());
+    EXPECT_NE(Size, nullptr);
+    if (!Size)
+      return AI;
+    EXPECT_EQ(Size->getZExtValue(), 3U);
+    return AI;
+  };
+
+  AllocaInst *BasePtrsAlloca =
+      expectDynamicAlloca(Info.RTArgs.BasePointersArray, Builder.getPtrTy());
+  ASSERT_NE(BasePtrsAlloca, nullptr);
+  EXPECT_EQ(RTArgs.BasePointersArray->stripPointerCasts(), BasePtrsAlloca);
+  expectDynamicAlloca(Info.RTArgs.PointersArray, Builder.getPtrTy());
+  expectDynamicAlloca(Info.RTArgs.SizesArray, Builder.getInt64Ty());
+  AllocaInst *MapTypesAlloca =
+      expectDynamicAlloca(Info.RTArgs.MapTypesArray, Builder.getInt64Ty());
+  ASSERT_NE(MapTypesAlloca, nullptr);
+  expectDynamicAlloca(Info.RTArgs.MapNamesArray, Builder.getPtrTy());
+  expectDynamicAlloca(Info.RTArgs.MappersArray, Builder.getPtrTy());
+
+  SmallVector<uint64_t, 4> MapTypeStoreValues;
+  SmallVector<uint64_t, 4> MapTypeStoreIndices;
+  for (Instruction &I : instructions(F)) {
+    auto *SI = dyn_cast<StoreInst>(&I);
+    if (!SI)
+      continue;
+    auto *GEP = dyn_cast<GetElementPtrInst>(SI->getPointerOperand());
+    if (!GEP || GEP->getPointerOperand()->stripPointerCasts() != MapTypesAlloca)
+      continue;
+    auto *StoredValue = dyn_cast<ConstantInt>(SI->getValueOperand());
+    ASSERT_NE(StoredValue, nullptr);
+    MapTypeStoreValues.push_back(StoredValue->getZExtValue());
+    Value *IndexValue = *GEP->idx_begin();
+    auto *Index = dyn_cast<ConstantInt>(IndexValue);
+    ASSERT_NE(Index, nullptr);
+    MapTypeStoreIndices.push_back(Index->getZExtValue());
+  }
+
+  EXPECT_THAT(
+      MapTypeStoreValues,
+      testing::UnorderedElementsAre(
+          static_cast<uint64_t>(omp::OpenMPOffloadMappingFlags::OMP_MAP_TO),
+          static_cast<uint64_t>(omp::OpenMPOffloadMappingFlags::OMP_MAP_FROM),
+          static_cast<uint64_t>(ToFromMapType)));
+  EXPECT_THAT(MapTypeStoreIndices, testing::UnorderedElementsAre(0, 1, 2));
+
+  Builder.restoreIP(OMPBuilder.Builder.saveIP());
+  Builder.CreateRetVoid();
+  EXPECT_FALSE(verifyModule(*M, &errs()));
+}
+
 TEST_F(OpenMPIRBuilderTest, OffloadEntriesInfoManager) {
   OpenMPIRBuilder OMPBuilder(*M);
   OMPBuilder.setConfig(

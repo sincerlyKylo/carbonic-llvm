@@ -2824,6 +2824,9 @@ public:
     /// Whether the `target ... data` directive has a `nowait` clause.
     bool HasNoWait = false;
 
+    /// Total number of map entries when the number is computed at runtime.
+    Value *TotalMapCount = nullptr;
+
     explicit TargetDataInfo() = default;
     explicit TargetDataInfo(bool RequiresDevicePointerInfo,
                             bool SeparateBeginEndCalls)
@@ -2839,7 +2842,8 @@ public:
     bool isValid() {
       return RTArgs.BasePointersArray && RTArgs.PointersArray &&
              RTArgs.SizesArray && RTArgs.MapTypesArray &&
-             (!HasMapper || RTArgs.MappersArray) && NumberOfPtrs;
+             (!HasMapper || RTArgs.MappersArray) &&
+             (NumberOfPtrs || TotalMapCount);
     }
     bool requiresDevicePointerInfo() { return RequiresDevicePointerInfo; }
     bool separateBeginEndCalls() { return SeparateBeginEndCalls; }
@@ -2905,6 +2909,27 @@ public:
   // mappers.
   using CustomMapperCallbackTy =
       function_ref<Expected<Function *>(unsigned int)>;
+
+  /// Callback for filling dynamic map entries after static entries have been
+  /// emitted into the offloading arrays.
+  using DynMapEntriesCallbackTy =
+      function_ref<Error(InsertPointTy CodeGenIP, TargetDataRTArgs &RTArgs,
+                         unsigned int StaticCount)>;
+
+  /// Store a single map entry into the offloading arrays at \p Index.
+  LLVM_ABI void emitOffloadingArraysMapEntry(
+      IRBuilderBase &Builder, TargetDataRTArgs &RTArgs, TargetDataInfo &Info,
+      Value *Index, Value *BasePtr, Value *Ptr, Value *Size, Value *MapType,
+      Value *MapTypeEnd = nullptr, Value *MapperFunc = nullptr,
+      Value *MapName = nullptr, DeviceInfoTy DevPtrType = DeviceInfoTy::None,
+      InsertPointTy AllocaIP = {}, unsigned DeviceAddrCBIndex = 0,
+      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr);
+
+  /// Allocate runtime-sized offloading arrays using \p Info.TotalMapCount.
+  LLVM_ABI void emitDynamicOffloadingArraysAllocas(InsertPointTy AllocaIP,
+                                                   InsertPointTy CodeGenIP,
+                                                   TargetDataInfo &Info,
+                                                   bool EmitDebug);
 
   /// Generate a target region entry call and host fallback call.
   ///
@@ -2973,7 +2998,8 @@ public:
       InsertPointTy AllocaIP, InsertPointTy CodeGenIP, MapInfosTy &CombinedInfo,
       TargetDataInfo &Info, CustomMapperCallbackTy CustomMapperCB,
       bool IsNonContiguous = false,
-      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr);
+      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr,
+      DynMapEntriesCallbackTy DynMapEntriesCB = nullptr);
 
   /// Allocates memory for and populates the arrays required for offloading
   /// (offload_{baseptrs|ptrs|mappers|sizes|maptypes|mapnames}). Then, it
@@ -2986,7 +3012,8 @@ public:
       TargetDataRTArgs &RTArgs, MapInfosTy &CombinedInfo,
       CustomMapperCallbackTy CustomMapperCB, bool IsNonContiguous = false,
       bool ForEndCall = false,
-      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr);
+      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr,
+      DynMapEntriesCallbackTy DynMapEntriesCB = nullptr);
 
   /// Creates offloading entry for the provided entry ID \a ID, address \a
   /// Addr, size \a Size, and flags \a Flags.
@@ -3609,6 +3636,8 @@ public:
   /// \param BodyGenCB Optional Callback to generate the region code.
   /// \param DeviceAddrCB Optional callback to generate code related to
   /// use_device_ptr and use_device_addr.
+  /// \param SrcLocInfo Optional source location information.
+  /// \param DynMapEntriesCB Optional callback to fill dynamic map entries.
   LLVM_ABI InsertPointOrErrorTy createTargetData(
       const LocationDescription &Loc, InsertPointTy AllocaIP,
       InsertPointTy CodeGenIP, ArrayRef<BasicBlock *> DeallocBlocks,
@@ -3619,7 +3648,8 @@ public:
                                         BodyGenTy BodyGenType)>
           BodyGenCB = nullptr,
       function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr,
-      Value *SrcLocInfo = nullptr);
+      Value *SrcLocInfo = nullptr,
+      DynMapEntriesCallbackTy DynMapEntriesCB = nullptr);
 
   using TargetBodyGenCallbackTy = function_ref<InsertPointOrErrorTy(
       InsertPointTy AllocaIP, InsertPointTy CodeGenIP,
