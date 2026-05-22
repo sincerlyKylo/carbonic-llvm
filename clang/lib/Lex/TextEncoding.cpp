@@ -35,7 +35,7 @@ TextEncoding::setConvertersFromOptions(TextEncoding &TEC,
     return std::error_code();
   ErrorOr<TextEncodingConverter> ErrorOrConverter =
       llvm::TextEncodingConverter::create(UTF8, TEC.LiteralEncoding);
-  if (ErrorOrConverter)
+  if (ErrorOrConverter) {
     TEC.ToLiteralEncodingConverter =
         new TextEncodingConverter(std::move(*ErrorOrConverter));
     TInfo.ExecStrConverter = TEC.ToLiteralEncodingConverter;
