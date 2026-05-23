@@ -4,6 +4,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(clangTidyLLVMModule STATIC
+  FormatvStringCheck.cpp
   HeaderGuardCheck.cpp
   IncludeOrderCheck.cpp
   LLVMTidyModule.cpp
@@ -21,7 +22,6 @@ add_clang_library(clangTidyLLVMModule STATIC
   clangTidy
   clangTidyReadabilityModule
   clangTidyUtils
-  clangTransformer
 
   DEPENDS
   omp_gen

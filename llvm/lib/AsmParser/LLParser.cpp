@@ -341,10 +341,13 @@ bool LLParser::validateEndOfModule(bool UpgradeDebugInfo) {
         if (!CB || !CB->isCallee(&U))
           return error(Info.second, "intrinsic can only be used as callee");
 
+        std::string ErrorMsg;
+        raw_string_ostream ErrorOS(ErrorMsg);
+
         SmallVector<Type *> OverloadTys;
         if (IID != Intrinsic::not_intrinsic &&
-            Intrinsic::getIntrinsicSignature(IID, CB->getFunctionType(),
-                                             OverloadTys)) {
+            Intrinsic::isSignatureValid(IID, CB->getFunctionType(), OverloadTys,
+                                        ErrorOS)) {
           U.set(Intrinsic::getOrInsertDeclaration(M, IID, OverloadTys));
         } else {
           // Try to upgrade the intrinsic.
@@ -354,7 +357,7 @@ bool LLParser::validateEndOfModule(bool UpgradeDebugInfo) {
           if (!UpgradeIntrinsicFunction(TmpF, NewF)) {
             if (IID == Intrinsic::not_intrinsic)
               return error(Info.second, "unknown intrinsic '" + Name + "'");
-            return error(Info.second, "invalid intrinsic signature");
+            return error(Info.second, ErrorMsg);
           }
 
           U.set(TmpF);
@@ -1064,11 +1067,12 @@ bool LLParser::skipModuleSummaryEntry() {
   // support is in place we will look for the tokens corresponding to the
   // expected tags.
   if (Lex.getKind() != lltok::kw_gv && Lex.getKind() != lltok::kw_module &&
-      Lex.getKind() != lltok::kw_typeid && Lex.getKind() != lltok::kw_flags &&
-      Lex.getKind() != lltok::kw_blockcount)
-    return tokError(
-        "Expected 'gv', 'module', 'typeid', 'flags' or 'blockcount' at the "
-        "start of summary entry");
+      Lex.getKind() != lltok::kw_typeid &&
+      Lex.getKind() != lltok::kw_typeidCompatibleVTable &&
+      Lex.getKind() != lltok::kw_flags && Lex.getKind() != lltok::kw_blockcount)
+    return tokError("Expected 'gv', 'module', 'typeid', "
+                    "'typeidCompatibleVTable', 'flags' or 'blockcount' at the "
+                    "start of summary entry");
   if (Lex.getKind() == lltok::kw_flags)
     return parseSummaryIndexFlags();
   if (Lex.getKind() == lltok::kw_blockcount)
@@ -4158,10 +4162,42 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
     ID.APSIntVal = Lex.getAPSIntVal();
     ID.Kind = ValID::t_APSInt;
     break;
-  case lltok::APFloat:
+  case lltok::APFloat: {
     ID.APFloatVal = Lex.getAPFloatVal();
     ID.Kind = ValID::t_APFloat;
     break;
+  }
+  case lltok::FloatLiteral: {
+    if (!ExpectedTy)
+      return error(ID.Loc, "unexpected floating-point literal");
+    if (!ExpectedTy->isFloatingPointTy())
+      return error(ID.Loc, "floating-point constant invalid for type");
+    ID.APFloatVal = APFloat(ExpectedTy->getFltSemantics());
+    APFloat::opStatus Except =
+        cantFail(ID.APFloatVal.convertFromString(
+                     Lex.getStrVal(), RoundingMode::NearestTiesToEven),
+                 "Invalid float strings should be caught by the lexer");
+    // Forbid overflowing and underflowing literals, but permit inexact
+    // literals. Underflow is thrown when the result is denormal, so to allow
+    // denormals, only reject underflowing literals that resulted in a zero.
+    if (Except & APFloat::opOverflow)
+      return error(ID.Loc, "floating-point constant overflowed type");
+    if ((Except & APFloat::opUnderflow) && ID.APFloatVal.isZero())
+      return error(ID.Loc, "floating-point constant underflowed type");
+    ID.Kind = ValID::t_APFloat;
+    break;
+  }
+  case lltok::FloatHexLiteral: {
+    if (!ExpectedTy)
+      return error(ID.Loc, "unexpected floating-point literal");
+    const auto &Semantics = ExpectedTy->getFltSemantics();
+    const APInt &Bits = Lex.getAPSIntVal();
+    if (APFloat::getSizeInBits(Semantics) != Bits.getBitWidth())
+      return error(ID.Loc, "float hex literal has incorrect number of bits");
+    ID.APFloatVal = APFloat(Semantics, Bits);
+    ID.Kind = ValID::t_APFloat;
+    break;
+  }
   case lltok::kw_true:
     ID.ConstantVal = ConstantInt::getTrue(Context);
     ID.Kind = ValID::t_Constant;
@@ -4217,12 +4253,13 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
     if (Elts.empty())
       return error(ID.Loc, "constant vector must not be empty");
 
-    if (!Elts[0]->getType()->isIntegerTy() &&
+    if (!Elts[0]->getType()->isIntegerTy() && !Elts[0]->getType()->isByteTy() &&
         !Elts[0]->getType()->isFloatingPointTy() &&
         !Elts[0]->getType()->isPointerTy())
       return error(
           FirstEltLoc,
-          "vector elements must have integer, pointer or floating point type");
+          "vector elements must have integer, byte, pointer or floating point "
+          "type");
 
     // Verify that all the vector elements have the same type.
     for (unsigned i = 1, e = Elts.size(); i != e; ++i)
@@ -4269,15 +4306,16 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
     ID.Kind = ValID::t_Constant;
     return false;
   }
-  case lltok::kw_c:  // c "foo"
+  case lltok::kw_c: { // c "foo"
     Lex.Lex();
-    ID.ConstantVal = ConstantDataArray::getString(Context, Lex.getStrVal(),
-                                                  false);
+    ArrayType *ATy = cast<ArrayType>(ExpectedTy);
+    ID.ConstantVal = ConstantDataArray::getString(
+        Context, Lex.getStrVal(), false, ATy->getElementType()->isByteTy());
     if (parseToken(lltok::StringConstant, "expected string"))
       return true;
     ID.Kind = ValID::t_Constant;
     return false;
-
+  }
   case lltok::kw_asm: {
     // ValID ::= 'asm' SideEffect? AlignStack? IntelDialect? STRINGCONSTANT ','
     //             STRINGCONSTANT
@@ -5887,6 +5925,9 @@ bool LLParser::parseDIBasicType(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   OPTIONAL(tag, DwarfTagField, (dwarf::DW_TAG_base_type));                     \
   OPTIONAL(name, MDStringField, );                                             \
+  OPTIONAL(file, MDField, );                                                   \
+  OPTIONAL(line, LineField, );                                                 \
+  OPTIONAL(scope, MDField, );                                                  \
   OPTIONAL(size, MDUnsignedOrMDField, (0, UINT64_MAX));                        \
   OPTIONAL(align, MDUnsignedField, (0, UINT32_MAX));                           \
   OPTIONAL(dataSize, MDUnsignedField, (0, UINT32_MAX));                        \
@@ -5897,9 +5938,9 @@ bool LLParser::parseDIBasicType(MDNode *&Result, bool IsDistinct) {
 #undef VISIT_MD_FIELDS
 
   Result = GET_OR_DISTINCT(
-      DIBasicType,
-      (Context, tag.Val, name.Val, size.getValueAsMetadata(Context), align.Val,
-       encoding.Val, num_extra_inhabitants.Val, dataSize.Val, flags.Val));
+      DIBasicType, (Context, tag.Val, name.Val, file.Val, line.Val, scope.Val,
+                    size.getValueAsMetadata(Context), align.Val, encoding.Val,
+                    num_extra_inhabitants.Val, dataSize.Val, flags.Val));
   return false;
 }
 
@@ -5912,6 +5953,9 @@ bool LLParser::parseDIFixedPointType(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   OPTIONAL(tag, DwarfTagField, (dwarf::DW_TAG_base_type));                     \
   OPTIONAL(name, MDStringField, );                                             \
+  OPTIONAL(file, MDField, );                                                   \
+  OPTIONAL(line, LineField, );                                                 \
+  OPTIONAL(scope, MDField, );                                                  \
   OPTIONAL(size, MDUnsignedOrMDField, (0, UINT64_MAX));                        \
   OPTIONAL(align, MDUnsignedField, (0, UINT32_MAX));                           \
   OPTIONAL(encoding, DwarfAttEncodingField, );                                 \
@@ -5924,10 +5968,10 @@ bool LLParser::parseDIFixedPointType(MDNode *&Result, bool IsDistinct) {
 #undef VISIT_MD_FIELDS
 
   Result = GET_OR_DISTINCT(DIFixedPointType,
-                           (Context, tag.Val, name.Val,
-                            size.getValueAsMetadata(Context), align.Val,
-                            encoding.Val, flags.Val, kind.Val, factor.Val,
-                            numerator.Val, denominator.Val));
+                           (Context, tag.Val, name.Val, file.Val, line.Val,
+                            scope.Val, size.getValueAsMetadata(Context),
+                            align.Val, encoding.Val, flags.Val, kind.Val,
+                            factor.Val, numerator.Val, denominator.Val));
   return false;
 }
 
@@ -6203,7 +6247,7 @@ bool LLParser::parseDISubprogram(MDNode *&Result, bool IsDistinct) {
   OPTIONAL(linkageName, MDStringField, );                                      \
   OPTIONAL(file, MDField, );                                                   \
   OPTIONAL(line, LineField, );                                                 \
-  OPTIONAL(type, MDField, );                                                   \
+  REQUIRED(type, MDField, (/* AllowNull */ false));                            \
   OPTIONAL(isLocal, MDBoolField, );                                            \
   OPTIONAL(isDefinition, MDBoolField, (true));                                 \
   OPTIONAL(scopeLine, LineField, );                                            \
@@ -6909,10 +6953,11 @@ bool LLParser::convertValIDToValue(Type *Ty, ValID &ID, Value *&V,
       V = NoCFIValue::get(cast<GlobalValue>(V));
     return V == nullptr;
   case ValID::t_APSInt:
-    if (!Ty->isIntegerTy())
-      return error(ID.Loc, "integer constant must have integer type");
+    if (!Ty->isIntegerTy() && !Ty->isByteTy())
+      return error(ID.Loc, "integer/byte constant must have integer/byte type");
     ID.APSIntVal = ID.APSIntVal.extOrTrunc(Ty->getPrimitiveSizeInBits());
-    V = ConstantInt::get(Context, ID.APSIntVal);
+    Ty->isIntegerTy() ? V = ConstantInt::get(Context, ID.APSIntVal)
+                      : V = ConstantByte::get(Context, ID.APSIntVal);
     return false;
   case ValID::t_APFloat:
     if (!Ty->isFloatingPointTy() ||
@@ -7034,7 +7079,7 @@ bool LLParser::parseConstantValue(Type *Ty, Constant *&C) {
   C = nullptr;
   ValID ID;
   auto Loc = Lex.getLoc();
-  if (parseValID(ID, /*PFS=*/nullptr))
+  if (parseValID(ID, /*PFS=*/nullptr, /*ExpectedTy=*/Ty))
     return true;
   switch (ID.Kind) {
   case ValID::t_APSInt:
@@ -9146,20 +9191,24 @@ int LLParser::parseCmpXchg(Instruction *&Inst, PerFunctionState &PFS) {
 }
 
 /// parseAtomicRMW
-///   ::= 'atomicrmw' 'volatile'? BinOp TypeAndValue ',' TypeAndValue
+///   ::= 'atomicrmw' 'volatile'? 'elementwise'? BinOp TypeAndValue ','
+///   TypeAndValue
 ///       'singlethread'? AtomicOrdering
 int LLParser::parseAtomicRMW(Instruction *&Inst, PerFunctionState &PFS) {
   Value *Ptr, *Val; LocTy PtrLoc, ValLoc;
   bool AteExtraComma = false;
   AtomicOrdering Ordering = AtomicOrdering::NotAtomic;
   SyncScope::ID SSID = SyncScope::System;
-  bool isVolatile = false;
+  bool IsVolatile = false;
+  bool IsElementwise = false;
   bool IsFP = false;
   AtomicRMWInst::BinOp Operation;
   MaybeAlign Alignment;
 
   if (EatIfPresent(lltok::kw_volatile))
-    isVolatile = true;
+    IsVolatile = true;
+  if (EatIfPresent(lltok::kw_elementwise))
+    IsElementwise = true;
 
   switch (Lex.getKind()) {
   default:
@@ -9236,23 +9285,34 @@ int LLParser::parseAtomicRMW(Instruction *&Inst, PerFunctionState &PFS) {
   if (Val->getType()->isScalableTy())
     return error(ValLoc, "atomicrmw operand may not be scalable");
 
+  // For elementwise ops, the value must be a fixed vector type whose element
+  // type is legal for the corresponding scalar atomicrmw operation. So assign
+  // ScalarTy the element type for elementwise ops so we can check this.
+  Type *ScalarTy = Val->getType();
+  if (IsElementwise) {
+    auto *VecTy = dyn_cast<FixedVectorType>(Val->getType());
+    if (!VecTy)
+      return error(ValLoc,
+                   "atomicrmw elementwise operand must be a fixed vector type");
+    ScalarTy = VecTy->getElementType();
+  }
+
   if (Operation == AtomicRMWInst::Xchg) {
-    if (!Val->getType()->isIntegerTy() &&
-        !Val->getType()->isFloatingPointTy() &&
-        !Val->getType()->isPointerTy()) {
+    if (!ScalarTy->isIntegerTy() && !ScalarTy->isFloatingPointTy() &&
+        !ScalarTy->isPointerTy()) {
       return error(
           ValLoc,
           "atomicrmw " + AtomicRMWInst::getOperationName(Operation) +
               " operand must be an integer, floating point, or pointer type");
     }
   } else if (IsFP) {
-    if (!Val->getType()->isFPOrFPVectorTy()) {
+    if (!ScalarTy->isFPOrFPVectorTy()) {
       return error(ValLoc, "atomicrmw " +
                                AtomicRMWInst::getOperationName(Operation) +
                                " operand must be a floating point type");
     }
   } else {
-    if (!Val->getType()->isIntegerTy()) {
+    if (!ScalarTy->isIntegerTy()) {
       return error(ValLoc, "atomicrmw " +
                                AtomicRMWInst::getOperationName(Operation) +
                                " operand must be an integer");
@@ -9260,18 +9320,16 @@ int LLParser::parseAtomicRMW(Instruction *&Inst, PerFunctionState &PFS) {
   }
 
   unsigned Size =
-      PFS.getFunction().getDataLayout().getTypeStoreSizeInBits(
-          Val->getType());
+      PFS.getFunction().getDataLayout().getTypeStoreSizeInBits(Val->getType());
   if (Size < 8 || (Size & (Size - 1)))
-    return error(ValLoc, "atomicrmw operand must be power-of-two byte-sized"
-                         " integer");
+    return error(ValLoc,
+                 "atomicrmw operand must have a power-of-two byte size");
   const Align DefaultAlignment(
-      PFS.getFunction().getDataLayout().getTypeStoreSize(
-          Val->getType()));
-  AtomicRMWInst *RMWI =
-      new AtomicRMWInst(Operation, Ptr, Val,
-                        Alignment.value_or(DefaultAlignment), Ordering, SSID);
-  RMWI->setVolatile(isVolatile);
+      PFS.getFunction().getDataLayout().getTypeStoreSize(Val->getType()));
+  AtomicRMWInst *RMWI = new AtomicRMWInst(Operation, Ptr, Val,
+                                          Alignment.value_or(DefaultAlignment),
+                                          Ordering, SSID, IsElementwise);
+  RMWI->setVolatile(IsVolatile);
   Inst = RMWI;
   return AteExtraComma ? InstExtraComma : InstNormal;
 }

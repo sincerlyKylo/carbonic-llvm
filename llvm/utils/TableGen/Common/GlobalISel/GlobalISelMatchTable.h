@@ -48,6 +48,7 @@ class CodeGenRegisterClass;
 namespace gi {
 class MatchTable;
 class Matcher;
+class RuleMatcher;
 class OperandMatcher;
 class MatchAction;
 class PredicateMatcher;
@@ -71,8 +72,7 @@ std::string getNameForFeatureBitset(ArrayRef<const Record *> FeatureBitset,
 /// they share. \p MatcherStorage is used as a memory container
 /// for the group that are created as part of this process.
 ///
-/// What this optimization does looks like if GroupT = GroupMatcher:
-/// Output without optimization:
+/// Example of GroupMatcher formation via this function:
 /// \verbatim
 /// # R1
 ///  # predicate A
@@ -92,10 +92,9 @@ std::string getNameForFeatureBitset(ArrayRef<const Record *> FeatureBitset,
 ///  # R2
 ///   # predicate C
 /// \endverbatim
-template <class GroupT>
 std::vector<Matcher *>
-optimizeRules(ArrayRef<Matcher *> Rules,
-              std::vector<std::unique_ptr<Matcher>> &MatcherStorage);
+optimizeRuleset(MutableArrayRef<RuleMatcher> Rules,
+                std::vector<std::unique_ptr<Matcher>> &MatcherStorage);
 
 /// A record to be stored in a MatchTable.
 ///
@@ -269,6 +268,7 @@ extern std::set<LLTCodeGen> KnownTypes;
 /// Convert an MVT to an equivalent LLT if possible, or the invalid LLT() for
 /// MVTs that don't map cleanly to an LLT (e.g., iPTR, *any, ...).
 std::optional<LLTCodeGen> MVTToLLT(MVT VT);
+std::optional<LLTCodeGen> MVTToGenericLLT(MVT VT);
 
 using TempTypeIdx = int64_t;
 class LLTCodeGenOrTempType {
@@ -323,6 +323,7 @@ public:
 
   virtual bool hasFirstCondition() const = 0;
   virtual const PredicateMatcher &getFirstCondition() const = 0;
+  virtual LLTCodeGen getFirstConditionAsRootType() const = 0;
   virtual std::unique_ptr<PredicateMatcher> popFirstCondition() = 0;
 
   /// Check recursively if the matcher records named operands for use in C++
@@ -394,6 +395,7 @@ public:
            "Trying to get a condition from a condition-less group");
     return *Conditions.front();
   }
+  LLTCodeGen getFirstConditionAsRootType() const override;
   bool hasFirstCondition() const override { return !Conditions.empty(); }
 
   bool recordsOperand() const override;
@@ -419,27 +421,34 @@ struct RecordAndValue {
 };
 
 class SwitchMatcher : public Matcher {
-  /// All the nested matchers, representing distinct switch-cases. The first
-  /// conditions (as Matcher::getFirstCondition() reports) of all the nested
-  /// matchers must share the same type and path to a value they check, in other
-  /// words, be isIdenticalDownToValue, but have different values they check
-  /// against.
+  /// All the nested matchers, representing switch-cases. The first conditions
+  /// (as Matcher::getFirstCondition() reports) of all the nested matchers must
+  /// share the same type and path to a value they check, in other words, be
+  /// isIdenticalDownToValue. Multiple matchers can share the same value and are
+  /// bucketed together.
   std::vector<Matcher *> Matchers;
 
   /// The representative condition, with a type and a path (InsnVarID and OpIdx
-  /// in most cases)  shared by all the matchers contained.
+  /// in most cases) shared by all the matchers contained.
   std::unique_ptr<PredicateMatcher> Condition;
 
-  /// Temporary set used to check that the case values don't repeat within the
-  /// same switch.
-  std::set<RecordAndValue> Values;
+  struct Bucket {
+    RecordAndValue Value;
+    std::vector<Matcher *> Matchers;
+
+    explicit Bucket(RecordAndValue Value) : Value(std::move(Value)) {}
+  };
+
+  /// Buckets of matchers keyed by their case value.
+  std::map<int64_t, Bucket> Buckets;
 
   /// An owning collection for any auxiliary matchers created while optimizing
   /// nested matchers contained.
   std::vector<std::unique_ptr<Matcher>> MatcherStorage;
 
 public:
-  SwitchMatcher() : Matcher(MK_Switch) {}
+  SwitchMatcher();
+  ~SwitchMatcher();
 
   static bool classof(const Matcher *M) { return M->getKind() == MK_Switch; }
 
@@ -462,7 +471,11 @@ public:
   }
 
   const PredicateMatcher &getFirstCondition() const override {
-    llvm_unreachable("Trying to pop a condition from a condition-less group");
+    llvm_unreachable("Trying to get a condition from a condition-less group");
+  }
+
+  LLTCodeGen getFirstConditionAsRootType() const override {
+    llvm_unreachable("Trying to get a condition from a condition-less group");
   }
 
   bool hasFirstCondition() const override { return false; }
@@ -713,7 +726,7 @@ public:
 
   std::unique_ptr<PredicateMatcher> popFirstCondition() override;
   const PredicateMatcher &getFirstCondition() const override;
-  LLTCodeGen getFirstConditionAsRootType();
+  LLTCodeGen getFirstConditionAsRootType() const override;
   bool hasFirstCondition() const override;
   StringRef getOpcode() const;
 
@@ -836,7 +849,6 @@ public:
     IPM_Opcode,
     IPM_NumOperands,
     IPM_ImmPredicate,
-    IPM_Imm,
     IPM_AtomicOrderingMMO,
     IPM_MemoryLLTSize,
     IPM_MemoryVsLLTSize,
@@ -847,7 +859,10 @@ public:
     IPM_OneUse,
     IPM_GenericPredicate,
     IPM_MIFlags,
+
     OPM_LeafPredicate,
+    OPM_ImmPredicate,
+    OPM_Imm,
     OPM_SameOperand,
     OPM_ComplexPattern,
     OPM_IntrinsicID,
@@ -856,6 +871,7 @@ public:
     OPM_Int,
     OPM_LiteralInt,
     OPM_LLT,
+    OPM_LLTShape,
     OPM_PointerToAny,
     OPM_RegBank,
     OPM_MBB,
@@ -976,6 +992,12 @@ class LLTOperandMatcher : public OperandPredicateMatcher {
 protected:
   LLTCodeGen Ty;
 
+  LLTOperandMatcher(PredicateKind Kind, unsigned InsnVarID, unsigned OpIdx,
+                    const LLTCodeGen &Ty)
+      : OperandPredicateMatcher(Kind, InsnVarID, OpIdx), Ty(Ty) {
+    KnownTypes.insert(Ty);
+  }
+
 public:
   static std::map<LLTCodeGen, unsigned> TypeIDValues;
 
@@ -988,9 +1010,7 @@ public:
   }
 
   LLTOperandMatcher(unsigned InsnVarID, unsigned OpIdx, const LLTCodeGen &Ty)
-      : OperandPredicateMatcher(OPM_LLT, InsnVarID, OpIdx), Ty(Ty) {
-    KnownTypes.insert(Ty);
-  }
+      : LLTOperandMatcher(OPM_LLT, InsnVarID, OpIdx, Ty) {}
 
   static bool classof(const PredicateMatcher *P) {
     return P->getKind() == OPM_LLT;
@@ -1008,6 +1028,36 @@ public:
 
   void emitPredicateOpcodes(MatchTable &Table,
                             RuleMatcher &Rule) const override;
+};
+
+/// Generates code to check that the element count & element sizes are the same.
+class LLTOperandShapeMatcher : public LLTOperandMatcher {
+  static ElementCount getShapeElementCount(const LLT &Ty) {
+    return Ty.isVector() ? Ty.getElementCount() : ElementCount::getFixed(1);
+  }
+
+  static unsigned getShapeScalarSizeInBits(const LLT &Ty) {
+    return Ty.getScalarSizeInBits();
+  }
+
+public:
+  LLTOperandShapeMatcher(unsigned InsnVarID, unsigned OpIdx,
+                         const LLTCodeGen &Ty)
+      : LLTOperandMatcher(OPM_LLTShape, InsnVarID, OpIdx, Ty) {}
+
+  static bool classof(const PredicateMatcher *P) {
+    return P->getKind() == OPM_LLTShape;
+  }
+
+  bool isIdentical(const PredicateMatcher &B) const override {
+    return OperandPredicateMatcher::isIdentical(B) &&
+           getShapeElementCount(Ty.get()) ==
+               getShapeElementCount(
+                   cast<LLTOperandShapeMatcher>(&B)->Ty.get()) &&
+           getShapeScalarSizeInBits(Ty.get()) ==
+               getShapeScalarSizeInBits(
+                   cast<LLTOperandShapeMatcher>(&B)->Ty.get());
+  }
 };
 
 /// Generates code to check that an operand is a pointer to any address space.
@@ -1158,10 +1208,10 @@ public:
 class ImmOperandMatcher : public OperandPredicateMatcher {
 public:
   ImmOperandMatcher(unsigned InsnVarID, unsigned OpIdx)
-      : OperandPredicateMatcher(IPM_Imm, InsnVarID, OpIdx) {}
+      : OperandPredicateMatcher(OPM_Imm, InsnVarID, OpIdx) {}
 
   static bool classof(const PredicateMatcher *P) {
-    return P->getKind() == IPM_Imm;
+    return P->getKind() == OPM_Imm;
   }
 
   void emitPredicateOpcodes(MatchTable &Table,
@@ -1270,7 +1320,7 @@ protected:
 public:
   OperandImmPredicateMatcher(unsigned InsnVarID, unsigned OpIdx,
                              const TreePredicateFn &Predicate)
-      : OperandPredicateMatcher(IPM_ImmPredicate, InsnVarID, OpIdx),
+      : OperandPredicateMatcher(OPM_ImmPredicate, InsnVarID, OpIdx),
         Predicate(Predicate) {}
 
   bool isIdentical(const PredicateMatcher &B) const override {
@@ -1281,7 +1331,7 @@ public:
   }
 
   static bool classof(const PredicateMatcher *P) {
-    return P->getKind() == IPM_ImmPredicate;
+    return P->getKind() == OPM_ImmPredicate;
   }
 
   void emitPredicateOpcodes(MatchTable &Table,

@@ -88,6 +88,11 @@ static cl::opt<bool> ManifestInternal(
 
 static cl::opt<int> MaxHeapToStackSize("max-heap-to-stack-size", cl::init(128),
                                        cl::Hidden);
+static cl::opt<unsigned> MaxAccessesPerAAPointerInfo(
+    "attributor-max-pi-accesses", cl::Hidden,
+    cl::desc("Maximum number of accesses in a single AAPointerInfo instance "
+             "before going pessimistic (0 = unlimited)"),
+    cl::init(512));
 
 template <>
 unsigned llvm::PotentialConstantIntValuesState::MaxPotentialValues = 0;
@@ -938,6 +943,10 @@ ChangeStatus AA::PointerInfo::State::addAccess(
     Attributor &A, const AAPointerInfo::RangeList &Ranges, Instruction &I,
     std::optional<Value *> Content, AAPointerInfo::AccessKind Kind, Type *Ty,
     Instruction *RemoteI) {
+  if (MaxAccessesPerAAPointerInfo > 0 &&
+      AccessList.size() >= MaxAccessesPerAAPointerInfo)
+    return indicatePessimisticFixpoint();
+
   RemoteI = RemoteI ? RemoteI : &I;
 
   // Check if we have an access for this instruction, if not, simply add it.
@@ -1190,14 +1199,10 @@ struct AAPointerInfoImpl
     auto HasKernelLifetime = [&](Value *V, Module &M) {
       if (!AA::isGPU(M))
         return false;
-      switch (AA::GPUAddressSpace(V->getType()->getPointerAddressSpace())) {
-      case AA::GPUAddressSpace::Shared:
-      case AA::GPUAddressSpace::Constant:
-      case AA::GPUAddressSpace::Local:
-        return true;
-      default:
-        return false;
-      };
+      unsigned VAS = V->getType()->getPointerAddressSpace();
+      return AA::isGPUSharedAddressSpace(M, VAS) ||
+             AA::isGPUConstantAddressSpace(M, VAS) ||
+             AA::isGPULocalAddressSpace(M, VAS);
     };
 
     // The IsLiveInCalleeCB will be used by the AA::isPotentiallyReachable query
@@ -2502,15 +2507,6 @@ bool AANoSync::isNonRelaxedAtomic(const Instruction *I) {
           Ordering != AtomicOrdering::Monotonic);
 }
 
-/// Return true if this intrinsic is nosync.  This is only used for intrinsics
-/// which would be nosync except that they have a volatile flag.  All other
-/// intrinsics are simply annotated with the nosync attribute in Intrinsics.td.
-bool AANoSync::isNoSyncIntrinsic(const Instruction *I) {
-  if (auto *MI = dyn_cast<MemIntrinsic>(I))
-    return !MI->isVolatile();
-  return false;
-}
-
 namespace {
 struct AANoSyncImpl : AANoSync {
   AANoSyncImpl(const IRPosition &IRP, Attributor &A) : AANoSync(IRP, A) {}
@@ -2674,8 +2670,11 @@ struct AANoFreeFloating : AANoFreeImpl {
         Follow = true;
         return true;
       }
-      if (isa<StoreInst>(UserI) || isa<LoadInst>(UserI))
+      if (isa<LoadInst>(UserI))
         return true;
+
+      if (isa<StoreInst>(UserI))
+        return U.getOperandNo() == StoreInst::getPointerOperandIndex();
 
       if (isa<ReturnInst>(UserI) && getIRPosition().isArgumentPosition())
         return true;
@@ -3259,8 +3258,8 @@ struct AAUndefinedBehaviorImpl : public AAUndefinedBehavior {
     const size_t NoUBPrevSize = AssumedNoUBInsts.size();
 
     auto InspectMemAccessInstForUB = [&](Instruction &I) {
-      // Lang ref now states volatile store is not UB, let's skip them.
-      if (I.isVolatile() && I.mayWriteToMemory())
+      // Volatile accesses on null are not necessarily UB.
+      if (I.isVolatile())
         return true;
 
       // Skip instructions that are already saved.
@@ -3651,6 +3650,17 @@ struct AAWillReturnImpl : public AAWillReturn {
     bool UsedAssumedInformation = false;
     if (!A.checkForAllCallLikeInstructions(CheckForWillReturn, *this,
                                            UsedAssumedInformation))
+      return indicatePessimisticFixpoint();
+
+    auto CheckForVolatile = [&](Instruction &I) {
+      // Volatile operations are not willreturn.
+      return !I.isVolatile();
+    };
+    if (!A.checkForAllInstructions(CheckForVolatile, *this,
+                                   {Instruction::Load, Instruction::Store,
+                                    Instruction::AtomicCmpXchg,
+                                    Instruction::AtomicRMW},
+                                   UsedAssumedInformation))
       return indicatePessimisticFixpoint();
 
     return ChangeStatus::UNCHANGED;
@@ -4488,6 +4498,9 @@ struct AAIsDeadValueImpl : public AAIsDead {
   /// Determine if \p I is assumed to be side-effect free.
   bool isAssumedSideEffectFree(Attributor &A, Instruction *I) {
     if (!I || wouldInstructionBeTriviallyDead(I))
+      return true;
+
+    if (!I->isTerminator() && !I->mayHaveSideEffects())
       return true;
 
     auto *CB = dyn_cast<CallBase>(I);
@@ -9047,11 +9060,12 @@ void AAMemoryLocationImpl::categorizePtrValue(
 
     // Filter accesses to constant (GPU) memory if we have an AS at the access
     // site or the object is known to actually have the associated AS.
-    if ((AccessAS == (unsigned)AA::GPUAddressSpace::Constant ||
-         (ObjectAS == (unsigned)AA::GPUAddressSpace::Constant &&
-          isIdentifiedObject(&Obj))) &&
-        AA::isGPU(*I.getModule()))
-      return true;
+    if (AA::isGPU(A.getModule())) {
+      if (AA::isGPUConstantAddressSpace(A.getModule(), AccessAS) ||
+          (AA::isGPUConstantAddressSpace(A.getModule(), ObjectAS) &&
+           isIdentifiedObject(&Obj)))
+        return true;
+    }
 
     if (isa<UndefValue>(&Obj))
       return true;
@@ -13116,7 +13130,7 @@ private:
     case IRP_CALL_SITE_RETURNED: {
       const auto &CB = cast<CallBase>(getAnchorValue());
       return !isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
-          &CB, /*MustPreserveNullness=*/false);
+          &CB, /*MustPreserveOffset=*/false);
     }
     case IRP_ARGUMENT: {
       const Function *F = getAssociatedFunction();
@@ -13251,7 +13265,7 @@ private:
 
     if (const auto *CB = dyn_cast<CallBase>(&getAnchorValue())) {
       if (isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
-              CB, /*MustPreserveNullness=*/false)) {
+              CB, /*MustPreserveOffset=*/false)) {
         for (const Value *Arg : CB->args()) {
           if (!IsLocallyInvariantLoadIfPointer(*Arg))
             return indicatePessimisticFixpoint();
@@ -13297,7 +13311,7 @@ struct AAInvariantLoadPointerCallSiteReturned final
 
     const auto &CB = cast<CallBase>(getAnchorValue());
     if (isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
-            &CB, /*MustPreserveNullness=*/false))
+            &CB, /*MustPreserveOffset=*/false))
       return AAInvariantLoadPointerImpl::initialize(A);
 
     if (F->onlyReadsMemory() && F->hasNoSync())

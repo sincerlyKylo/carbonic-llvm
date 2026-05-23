@@ -2,7 +2,7 @@
 set(req_ver "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}")
 if(LLVM_VERSION_MAJOR AND NOT (CMAKE_CXX_COMPILER_ID MATCHES "[Cc]lang" AND
    ${CMAKE_CXX_COMPILER_VERSION} VERSION_EQUAL "${req_ver}"))
-  message(FATAL_ERROR "Cannot build GPU device runtime. CMake compiler "
+   message(WARNING "openmp for GPU requires an up-to-date clang. CMake compiler "
                       "'${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}' "
                       " is not 'Clang ${req_ver}'.")
 endif()
@@ -112,7 +112,7 @@ endif()
 # Trick to combine these into a bitcode file via the linker's LTO pass.
 add_executable(libompdevice ${src_files})
 set_target_properties(libompdevice PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   LINKER_LANGUAGE CXX
   BUILD_RPATH ""
   INSTALL_RPATH ""
@@ -167,19 +167,23 @@ endif()
 
 install(TARGETS libompdevice
         PERMISSIONS OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ
-        DESTINATION ${OPENMP_INSTALL_LIBDIR})
+        DESTINATION ${OPENMP_INSTALL_LIBDIR}
+        COMPONENT openmp)
 
 add_library(ompdevice.all_objs OBJECT IMPORTED)
 set_property(TARGET ompdevice.all_objs APPEND PROPERTY IMPORTED_OBJECTS
-             ${CMAKE_CURRENT_BINARY_DIR}/libomptarget-${target_name}.bc)
+              ${CMAKE_CURRENT_BINARY_DIR}/libomptarget-${target_name}.bc)
 
 # Archive all the object files generated above into a static library
 add_library(ompdevice STATIC)
 add_dependencies(ompdevice libompdevice)
 set_target_properties(ompdevice PROPERTIES
-  ARCHIVE_OUTPUT_DIRECTORY "${OPENMP_INSTALL_LIBDIR}"
-  ARCHIVE_OUTPUT_NAME ompdevice
+   ARCHIVE_OUTPUT_DIRECTORY "${OPENMP_INSTALL_LIBDIR}"
+   ARCHIVE_OUTPUT_NAME ompdevice
   LINKER_LANGUAGE CXX
 )
 target_link_libraries(ompdevice PRIVATE ompdevice.all_objs)
-install(TARGETS ompdevice ARCHIVE DESTINATION "${OPENMP_INSTALL_LIBDIR}")
+install(TARGETS ompdevice ARCHIVE DESTINATION "${OPENMP_INSTALL_LIBDIR}"
+        COMPONENT openmp)
+
+openmp_register_meta_dep(ompdevice)

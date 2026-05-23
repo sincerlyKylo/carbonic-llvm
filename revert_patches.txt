@@ -5,15 +5,21 @@ rocwmma and CK needs changes
 breaks build of hipblaslt
 [AMDGPU][AsmParser] Forbid Fake16 instructions in Real16 mode (#176934)
 ---
-breaks smoke*
-[Reland][IR] Add initial support for the byte type (#186888)
----
 breaks rocgdb UT
 [Clang][CodeGen] Restore isEmptyFieldForLayout for empty class handling
 ---
 needs SPIRV/COMGR
 18e695890306 [SPIRV][AMDGPU][clang][CodeGen][opt] Add late-resolved 
 ---
-ubsan issues
-Reapply "[compiler-rt] Enable minimal ubsan for GPU targets (#188289)"
+breaks build of llvm
+[clang][CIR][doc] Add auto-generated ClangIR documentation (#190354)
+---
+breaks windows build
+[cmake] Refactor DIA SDK detection into FindDIASDK module (#160354)
+---
+breaks comgr test
+clang: Refactor handling of offload sanitizer arguments (#196737)
+---
+Breaks rocprim shard 1/1
+[clang] remove lots of "innocuous" addrspacecasts (llvm#
 ---

@@ -381,6 +381,10 @@ void MLIRContext::registerActionHandler(HandlerTy handler) {
   getImpl().actionHandler = std::move(handler);
 }
 
+const MLIRContext::HandlerTy &MLIRContext::getActionHandler() {
+  return getImpl().actionHandler;
+}
+
 /// Dispatch the provided action to the handler if any, or just execute it.
 void MLIRContext::executeActionInternal(function_ref<void()> actionFn,
                                         const tracing::Action &action) {
@@ -445,7 +449,7 @@ std::vector<Dialect *> MLIRContext::getLoadedDialects() {
 }
 std::vector<StringRef> MLIRContext::getAvailableDialects() {
   std::vector<StringRef> result;
-  for (auto dialect : impl->dialectsRegistry.getDialectNames())
+  for (auto dialect : impl->dialectsRegistry.getRegisteredDialectNames())
     result.push_back(dialect);
   return result;
 }

@@ -69,7 +69,6 @@ class Process;
 class Stream;
 class SymbolContext;
 class Target;
-class Debugger;
 
 #ifndef NDEBUG
 /// Global properties used in the LLDB testsuite.
@@ -85,7 +84,7 @@ struct TestingProperties : public Properties {
   void AppendSafeAutoLoadPaths(FileSpec path);
 
 private:
-  friend Debugger;
+  friend Target;
 
   /// Callers should use Debugger::GetSafeAutoLoadPaths since it
   /// accounts for default paths configured via CMake.
@@ -145,12 +144,6 @@ public:
   static void AssertCallback(llvm::StringRef message, llvm::StringRef backtrace,
                              llvm::StringRef prompt);
 
-  /// Get the list of paths that LLDB will consider automatically loading
-  /// scripting resources from. Currently whether to load scripts
-  /// unconditionally is controlled via the
-  /// `target.load-script-from-symbol-file` setting.
-  static FileSpecList GetSafeAutoLoadPaths();
-
   void Clear();
 
   void DispatchClientTelemetry(const lldb_private::StructuredDataImpl &entry);
@@ -202,10 +195,6 @@ public:
   // path and display them to you. To get the target's source manager, call
   // GetSourceManager on the target instead.
   SourceManager &GetSourceManager();
-
-  lldb::TargetSP GetSelectedTarget() {
-    return m_target_list.GetSelectedTarget();
-  }
 
   /// Get the execution context representing the selected entities in the
   /// selected target. If no target is selected, the execution context will
@@ -658,6 +647,8 @@ public:
     std::string message;
   };
   std::optional<ProgressReport> GetCurrentProgressReport() const;
+
+  static const FileSpecList &GetDefaultSafeAutoLoadPaths();
 
 protected:
   friend class CommandInterpreter;

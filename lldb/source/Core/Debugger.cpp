@@ -213,7 +213,7 @@ enum {
 };
 #endif
 
-static const FileSpecList &GetDefaultSafeAutoLoadPaths() {
+const FileSpecList &Debugger::GetDefaultSafeAutoLoadPaths() {
   static const FileSpecList sSafePaths = [] {
     // FIXME: in c++20 this could be a std::array (with CTAD deduced size)
     // and we could statically assert that all members are non-empty.
@@ -1302,7 +1302,7 @@ Debugger::GetSelectedExecutionContext(bool adopt_dummy_target) {
 
 ExecutionContextRef
 Debugger::GetSelectedExecutionContextRef(bool adopt_dummy_target) {
-  if (TargetSP selected_target_sp = GetSelectedTarget())
+  if (TargetSP selected_target_sp = m_target_list.GetSelectedTarget())
     return ExecutionContextRef(selected_target_sp.get(),
                                /*adopt_selected=*/true);
 
@@ -2617,16 +2617,4 @@ StructuredData::DictionarySP Debugger::GetBuildConfiguration() {
       "A boolean value that indicates if lua support is enabled in LLDB");
   AddLLVMTargets(*config_up);
   return config_up;
-}
-
-FileSpecList Debugger::GetSafeAutoLoadPaths() {
-  FileSpecList fspecs = GetDefaultSafeAutoLoadPaths();
-
-#ifndef NDEBUG
-  for (const auto &fspec :
-       TestingProperties::GetGlobalTestingProperties().GetSafeAutoLoadPaths())
-    fspecs.Append(fspec);
-#endif
-
-  return fspecs;
 }
