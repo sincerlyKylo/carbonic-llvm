@@ -42,7 +42,7 @@ TextEncoding::setConvertersFromOptions(TextEncoding &TEC,
     return ErrorOrConverter.getError();
 
   ErrorOrConverter = llvm::TextEncodingConverter::create(
-      TInfo.getDefaultNarrowTextEncoding(), UTF8);
+      TInfo.getDefaultOrdinaryTextEncoding(), UTF8);
 
   if (ErrorOrConverter)
     TInfo.FormatStrConverter =
