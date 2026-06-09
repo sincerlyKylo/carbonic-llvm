@@ -11,9 +11,3 @@ breaks rocgdb UT
 breaks windows build
 [cmake] Refactor DIA SDK detection into FindDIASDK module (#160354)
 ---
-needs merge work: Kruse
-aa8e38f4f871 [OpenMP] FIx omp_lib.mod compilation for the GPU
-9e01e0970c4c [Flang-RT] Disable tests by default without mod
-911eddeed7ba [Flang] Fix omp_lib.h location and search path
-bafde6fbb [Flang] Move builtin .mod generation into runtimes
----
