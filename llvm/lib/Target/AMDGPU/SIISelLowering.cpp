@@ -905,11 +905,18 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                          Custom);
     }
     if (Subtarget->hasPackedFP64Ops()) {
-      setOperationAction({ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG},
+      setOperationAction({ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG,
+                          ISD::FMINNUM_IEEE, ISD::FMAXNUM_IEEE,
+                          ISD::FCANONICALIZE},
                          MVT::v2f64, Legal);
-      setOperationAction({ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG},
-                         {MVT::v4f64, MVT::v8f64, MVT::v16f64, MVT::v32f64},
-                         Custom);
+      setOperationAction(
+          {ISD::FMINNUM, ISD::FMAXNUM, ISD::FMINIMUMNUM, ISD::FMAXIMUMNUM},
+          MVT::v2f64, Custom);
+      setOperationAction(
+          {ISD::FADD, ISD::FMUL, ISD::FMA, ISD::FNEG, ISD::FMINNUM_IEEE,
+           ISD::FMAXNUM_IEEE, ISD::FMINNUM, ISD::FMAXNUM, ISD::FMINIMUMNUM,
+           ISD::FMAXIMUMNUM, ISD::FCANONICALIZE},
+          {MVT::v4f64, MVT::v8f64, MVT::v16f64, MVT::v32f64}, Custom);
     }
   }
 
@@ -15125,7 +15132,7 @@ static bool hasNon16BitAccesses(uint64_t PermMask, SDValue &Op,
   auto TempOtherOp = peekThroughBitcasts(OtherOp);
 
   auto OpIs16Bit =
-      TempOtherOp.getValueSizeInBits() == 16 || isExtendedFrom16Bits(TempOp);
+      TempOp.getValueSizeInBits() == 16 || isExtendedFrom16Bits(TempOp);
   if (!OpIs16Bit)
     return true;
 
