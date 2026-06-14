@@ -288,6 +288,55 @@ Action *BottomUpVec::vectorizeRec(ArrayRef<Value *> Bndl,
   const auto &LegalityRes = StopForDebug ? Legality.getForcedPackForDebugging()
                                          : Legality.canVectorize(Bndl);
   LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Legality: " << LegalityRes << "\n");
+
+  if (Direction == VecDirection::TopDown) {
+    auto ActionPtr = std::make_unique<Action>(&LegalityRes, Bndl,
+                                              ArrayRef<Value *>(), Depth);
+
+    if (LegalityRes.getSubclassID() == LegalityResultID::Widen)
+      IMaps->registerVector(Bndl, ActionPtr.get());
+
+    // Pre-order push so defs are before uses.
+    Action *Action = ActionPtr.get();
+    Actions.push_back(std::move(ActionPtr));
+
+    if (LegalityRes.getSubclassID() == LegalityResultID::Widen) {
+      // Find users of Bndl to recurse down.
+      // Group the first user of each element if they match.
+      SmallVector<Value *, 4> NextUserBndl;
+      bool CanFormUserBndl = true;
+      for (Value *V : Bndl) {
+        if (V->user_begin() == V->user_end()) {
+          CanFormUserBndl = false;
+          break;
+        }
+        NextUserBndl.push_back(*V->user_begin());
+      }
+
+      if (CanFormUserBndl) {
+        auto *U0 = dyn_cast<Instruction>(NextUserBndl[0]);
+        if (!U0 || IMaps->isVectorized(U0))
+          CanFormUserBndl = false;
+        else {
+          for (Value *U : drop_begin(NextUserBndl)) {
+            auto *UI = dyn_cast<Instruction>(U);
+            if (!UI || UI->getOpcode() != U0->getOpcode() ||
+                UI->getType() != U0->getType() || IMaps->isVectorized(UI)) {
+              CanFormUserBndl = false;
+              break;
+            }
+          }
+        }
+      }
+
+      if (CanFormUserBndl)
+        vectorizeRec(NextUserBndl, {}, Depth + 1, Legality);
+    }
+
+    return Action;
+  }
+
+  // Bottom up direction
   auto ActionPtr =
       std::make_unique<Action>(&LegalityRes, Bndl, UserBndl, Depth);
   SmallVector<Action *> Operands;
@@ -387,22 +436,44 @@ Value *BottomUpVec::emitVectors() {
     case LegalityResultID::Widen: {
       auto *I = cast<Instruction>(Bndl[0]);
       SmallVector<Value *, 2> VecOperands;
-      switch (I->getOpcode()) {
-      case Instruction::Opcode::Load:
-        VecOperands.push_back(cast<LoadInst>(I)->getPointerOperand());
-        break;
-      case Instruction::Opcode::Store: {
-        VecOperands.push_back(ActionPtr->Operands[0]->Vec);
-        VecOperands.push_back(cast<StoreInst>(I)->getPointerOperand());
-        break;
-      }
-      default:
-        // Visit all operands.
-        for (Action *OpA : ActionPtr->Operands) {
-          auto *VecOp = OpA->Vec;
-          VecOperands.push_back(VecOp);
+      if (Direction == VecDirection::BottomUp) {
+        switch (I->getOpcode()) {
+        case Instruction::Opcode::Load:
+          VecOperands.push_back(cast<LoadInst>(I)->getPointerOperand());
+          break;
+        case Instruction::Opcode::Store:
+          VecOperands.push_back(ActionPtr->Operands[0]->Vec);
+          VecOperands.push_back(cast<StoreInst>(I)->getPointerOperand());
+          break;
+        default:
+          for (Action *OpA : ActionPtr->Operands)
+            VecOperands.push_back(OpA->Vec);
+          break;
         }
-        break;
+      } else {
+        switch (I->getOpcode()) {
+        case Instruction::Opcode::Load:
+          VecOperands.push_back(cast<LoadInst>(I)->getPointerOperand());
+          break;
+        case Instruction::Opcode::Store: {
+          auto OpBndl = getOperand(Bndl, 0);
+          if (Action *OpA = IMaps->getVectorForOrig(OpBndl[0]))
+            VecOperands.push_back(OpA->Vec);
+          else
+            VecOperands.push_back(createPack(OpBndl, UserBB));
+          VecOperands.push_back(cast<StoreInst>(I)->getPointerOperand());
+          break;
+        }
+        default:
+          for (unsigned OpIdx = 0; OpIdx < I->getNumOperands(); ++OpIdx) {
+            SmallVector<Value *, 4> OpBndl = getOperand(Bndl, OpIdx);
+            if (Action *OpA = IMaps->getVectorForOrig(OpBndl[0]))
+              VecOperands.push_back(OpA->Vec);
+            else
+              VecOperands.push_back(createPack(OpBndl, UserBB));
+          }
+          break;
+        }
       }
       NewVec = createVectorInstr(ActionPtr->Bndl, VecOperands);
       // Collect any potentially dead scalar instructions, including the
@@ -526,7 +597,10 @@ bool BottomUpVec::tryVectorize(ArrayRef<Value *> Bndl,
   Actions.clear();
   DebugBndlCnt = 0;
   vectorizeRec(Bndl, {}, /*Depth=*/0, Legality);
-  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "BottomUpVec: Vectorization Actions:\n";
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX
+                    << (Direction == VecDirection::TopDown ? "TopDownVec"
+                                                           : "BottomUpVec")
+                    << ": Vectorization Actions:\n";
              Actions.dump());
   emitVectors();
   tryEraseDeadInstrs();
