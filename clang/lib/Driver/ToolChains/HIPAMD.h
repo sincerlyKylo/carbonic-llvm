@@ -100,8 +100,7 @@ public:
   LTOKind getDefaultLTOMode() const override { return LTOK_Full; }
 
   const ToolChain &HostTC;
-  ParsedTargetIDType
-  checkTargetID(const llvm::opt::ArgList &DriverArgs) const override;
+  void checkTargetID(const llvm::opt::ArgList &DriverArgs) const override;
 
 protected:
   Tool *buildLinker() const override;

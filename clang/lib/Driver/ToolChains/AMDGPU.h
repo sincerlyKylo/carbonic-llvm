@@ -158,17 +158,15 @@ public:
   getSystemGPUArchs(const llvm::opt::ArgList &Args) const override;
 
 protected:
+  /// Check and diagnose invalid target ID specified by -mcpu.
+  virtual void checkTargetID(const llvm::opt::ArgList &DriverArgs) const;
+
   /// The struct type returned by getParsedTargetID.
   struct ParsedTargetIDType {
     std::optional<std::string> OptionalTargetID;
     std::optional<std::string> OptionalGPUArch;
-    std::optional<llvm::StringMap<bool>> OptionalFeatureMap;
+    std::optional<llvm::StringMap<bool>> OptionalFeatures;
   };
-
-  /// Check and diagnose invalid target ID specified by -mcpu.
-  /// Returns the parsed target ID.
-  virtual ParsedTargetIDType
-  checkTargetID(const llvm::opt::ArgList &DriverArgs) const;
 
   /// Get target ID, GPU arch, and target ID features if the target ID is
   /// specified and valid.
