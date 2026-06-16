@@ -874,6 +874,19 @@ void visitAllSymbols(const FunctionLikeUnit &funit,
 void visitAllSymbols(const Evaluation &eval,
                      std::function<void(const semantics::Symbol &)> callBack);
 
+/// Return true if every control-flow successor recorded under \p construct
+/// (recursively over its nested evaluations) points to an evaluation that
+/// is itself nested under \p construct or is \p construct's own
+/// constructExit. A false return means at least one branch leaves the
+/// construct (e.g. a GOTO to an outer label).
+bool branchesAreInternal(const Evaluation &construct);
+
+/// Return true when \p eval is an unstructured DO or IF construct that the
+/// wrap-unstructured-constructs-in-execute-region pass can fold into a
+/// self-contained scf.execute_region: the wrap flag is on, the construct is
+/// unstructured, and all its internal branches stay inside the construct.
+bool isWrappableConstruct(const Evaluation &eval);
+
 } // namespace Fortran::lower::pft
 
 namespace Fortran::lower {

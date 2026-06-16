@@ -2544,6 +2544,38 @@ private:
     Fortran::lower::pft::Evaluation &eval = getEval();
     bool unstructuredContext = eval.lowerAsUnstructured();
 
+    // Pre-wrap: build the DO's CFG inside a fresh scf.execute_region and
+    // redirect its construct exit to the region's yield block.
+    mlir::scf::ExecuteRegionOp wrapOp;
+    mlir::Block *savedExitBlock = nullptr;
+
+    if (unstructuredContext &&
+        Fortran::lower::pft::isWrappableConstruct(eval)) {
+      mlir::Location loc = toLocation();
+      wrapOp = mlir::scf::ExecuteRegionOp::create(
+          *builder, loc, mlir::TypeRange{},
+          /*noInline=*/builder->getUnitAttr());
+      ++wrapUnstructuredCount;
+      llvm::errs() << "[wrap-unstructured] wrapped DO at ";
+      loc.print(llvm::errs());
+      llvm::errs() << "\n";
+      mlir::Block *entry = builder->createBlock(&wrapOp.getRegion());
+      builder->setInsertionPointToEnd(entry);
+      createEmptyBlocks(eval.getNestedEvaluations());
+      mlir::Block *yieldBlock = builder->createBlock(&wrapOp.getRegion());
+      builder->setInsertionPointToEnd(yieldBlock);
+      mlir::scf::YieldOp::create(*builder, loc);
+
+      // Redirect constructs that leave the loop to the `yieldBlock` to legally
+      // exit the `execute_region` and scape it.
+      if (eval.constructExit) {
+        savedExitBlock = eval.constructExit->block;
+        eval.constructExit->block = yieldBlock;
+      }
+
+      builder->setInsertionPointToEnd(entry);
+    }
+
     // If this do-loop was absorbed by a collapse clause on a parent acc.loop,
     // skip generating any loop — just lower the body.  The IV value is
     // already available from the parent acc.loop's block argument.
@@ -2716,6 +2748,13 @@ private:
     for (IncrementLoopInfo &info : incrementLoopNestInfo)
       if (auto loopOp = mlir::dyn_cast_if_present<fir::DoLoopOp>(info.loopOp))
         attachAttributesToDoLoopOperations(loopOp, doStmtEval.dirs);
+
+    // Finalize the pre-wrap if it fired.
+    if (wrapOp) {
+      if (eval.constructExit)
+        eval.constructExit->block = savedExitBlock;
+      builder->setInsertionPointAfter(wrapOp);
+    }
   }
 
   /// Generate FIR to evaluate loop control values (lower, upper and step).
@@ -3194,7 +3233,32 @@ private:
       return;
     }
 
-    // Unstructured branch sequence.
+    // Pre-wrap: build the IF's CFG inside a fresh scf.execute_region and
+    // redirect its construct exit to the region's yield block.
+    mlir::scf::ExecuteRegionOp wrapOp = nullptr;
+    mlir::Block *savedExitBlock = nullptr;
+    if (Fortran::lower::pft::isWrappableConstruct(eval)) {
+      mlir::Location loc = toLocation();
+      wrapOp = mlir::scf::ExecuteRegionOp::create(
+          *builder, loc, mlir::TypeRange{},
+          /*noInline=*/builder->getUnitAttr());
+      ++wrapUnstructuredCount;
+      llvm::errs() << "[wrap-unstructured] wrapped IF at ";
+      loc.print(llvm::errs());
+      llvm::errs() << "\n";
+      mlir::Block *entry = builder->createBlock(&wrapOp.getRegion());
+      builder->setInsertionPointToEnd(entry);
+      createEmptyBlocks(eval.getNestedEvaluations());
+      mlir::Block *yieldBlock = builder->createBlock(&wrapOp.getRegion());
+      builder->setInsertionPointToEnd(yieldBlock);
+      mlir::scf::YieldOp::create(*builder, loc);
+      if (eval.constructExit) {
+        savedExitBlock = eval.constructExit->block;
+        eval.constructExit->block = yieldBlock;
+      }
+      builder->setInsertionPointToEnd(entry);
+    }
+
     llvm::SmallVector<Fortran::lower::pft::Evaluation *> exits, fallThroughs;
     collectFinalEvaluations(eval, exits, fallThroughs);
 
@@ -3225,6 +3289,12 @@ private:
             genBranch(e.lexicalSuccessor->block);
         }
       }
+    }
+
+    if (wrapOp) {
+      if (eval.constructExit)
+        eval.constructExit->block = savedExitBlock;
+      builder->setInsertionPointAfter(wrapOp);
     }
   }
 
@@ -6393,7 +6463,16 @@ private:
       if (eval.isNewBlock)
         eval.block = builder->createBlock(region);
       if (eval.isConstruct() || eval.isDirective()) {
-        if (eval.lowerAsUnstructured()) {
+        if (Fortran::lower::pft::isWrappableConstruct(eval)) {
+          // The wrap owns internal blocks; only create the entry block here
+          // so the enclosing CFG can branch to it.
+          if (eval.hasNestedEvaluations()) {
+            Fortran::lower::pft::Evaluation &constructStmt =
+                eval.getFirstNestedEvaluation();
+            if (constructStmt.isNewBlock)
+              constructStmt.block = builder->createBlock(region);
+          }
+        } else if (eval.lowerAsUnstructured()) {
           createEmptyBlocks(eval.getNestedEvaluations());
         } else if (eval.hasNestedEvaluations()) {
           // A structured construct that is a target starts a new block.
@@ -6575,8 +6654,16 @@ private:
          entryIndex < last; ++entryIndex) {
       funit.setActiveEntry(entryIndex);
       startNewFunction(funit); // the entry point for lowering this procedure
+      wrapUnstructuredCount = 0;
       for (Fortran::lower::pft::Evaluation &eval : funit.evaluationList)
         genFIR(eval);
+      if (wrapUnstructuredCount > 0) {
+        llvm::errs()
+            << "[wrap-unstructured] summary: " << wrapUnstructuredCount
+            << " execute_region(s) wrapping unstructured constructs at ";
+        toLocation().print(llvm::errs());
+        llvm::errs() << "\n";
+      }
       endNewFunction(funit);
     }
     funit.setActiveEntry(0);
@@ -6982,6 +7069,13 @@ private:
   Fortran::lower::SymMap localSymbols;
   Fortran::parser::CharBlock currentPosition;
   TypeInfoConverter typeInfoConverter;
+
+  /// Counter of `scf.execute_region` ops created by the
+  /// `--wrap-unstructured-constructs-in-execute-region` path for the
+  /// currently-lowered function. Reset at the top of `lowerFunc` and
+  /// reported on exit so we can see, per function, how many unstructured
+  /// constructs were wrapped.
+  unsigned wrapUnstructuredCount = 0;
 
   // Stack to manage object deallocation and finalization at construct exits.
   llvm::SmallVector<ConstructContext> activeConstructStack;

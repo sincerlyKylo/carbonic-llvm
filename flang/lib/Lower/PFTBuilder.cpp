@@ -18,12 +18,19 @@
 #include "llvm/ADT/IntervalMap.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include <limits>
 
 #define DEBUG_TYPE "flang-pft"
 
 static llvm::cl::opt<bool> clDisableStructuredFir(
     "no-structured-fir", llvm::cl::desc("disable generation of structured FIR"),
     llvm::cl::init(false), llvm::cl::Hidden);
+
+llvm::cl::opt<bool> wrapUnstructuredConstructsInExecuteRegion(
+    "wrap-unstructured-constructs-in-execute-region", llvm::cl::init(true),
+    llvm::cl::desc(
+        "wrap each unstructured DO construct whose body only exits via the "
+        "construct exit in an scf.execute_region op"));
 
 using namespace Fortran;
 
@@ -1214,8 +1221,11 @@ private:
       if (eval.evaluationList)
         analyzeBranches(&eval, *eval.evaluationList);
 
-      // Propagate isUnstructured flag to enclosing construct.
-      if (parentConstruct && eval.isUnstructured)
+      // Propagate isUnstructured flag to enclosing construct -- unless the
+      // wrap pass will fold this construct into a self-contained
+      // scf.execute_region, in which case the parent sees only a single op.
+      if (parentConstruct && eval.isUnstructured &&
+          !lower::pft::isWrappableConstruct(eval))
         parentConstruct->isUnstructured = true;
 
       // The successor of a branch starts a new block.
@@ -2334,4 +2344,194 @@ void Fortran::lower::pft::visitAllSymbols(
   eval.visit([&](const auto &functionParserNode) {
     parser::Walk(functionParserNode, visitor);
   });
+}
+
+bool Fortran::lower::pft::branchesAreInternal(
+    const Fortran::lower::pft::Evaluation &construct) {
+  auto isInside = [&](const Fortran::lower::pft::Evaluation *target) {
+    if (!target)
+      return true;
+    if (target == construct.constructExit)
+      return true;
+    for (const Fortran::lower::pft::Evaluation *p = target; p;
+         p = p->parentConstruct)
+      if (p == &construct)
+        return true;
+    return false;
+  };
+  std::function<bool(const Fortran::lower::pft::EvaluationList &)> walk =
+      [&](const Fortran::lower::pft::EvaluationList &list) -> bool {
+    for (const Fortran::lower::pft::Evaluation &nested : list) {
+      if (nested.controlSuccessor && !isInside(nested.controlSuccessor))
+        return false;
+      if (nested.evaluationList && !walk(*nested.evaluationList))
+        return false;
+    }
+    return true;
+  };
+  if (!construct.evaluationList)
+    return false;
+  return walk(*construct.evaluationList);
+}
+
+/// True if any eval outside \p construct branches strictly inside it.
+/// Such branches would cross the scf.execute_region boundary at lowering.
+static bool
+hasIncomingBranch(const Fortran::lower::pft::Evaluation &construct) {
+  auto isStrictlyInside = [&](const Fortran::lower::pft::Evaluation *target) {
+    if (!target || target == construct.constructExit)
+      return false;
+    for (const Fortran::lower::pft::Evaluation *p = target; p;
+         p = p->parentConstruct)
+      if (p == &construct)
+        return true;
+    return false;
+  };
+  const Fortran::lower::pft::FunctionLikeUnit *funit =
+      construct.getOwningProcedure();
+  if (!funit)
+    return false;
+  std::function<bool(const Fortran::lower::pft::EvaluationList &)> walk =
+      [&](const Fortran::lower::pft::EvaluationList &list) -> bool {
+    for (const Fortran::lower::pft::Evaluation &e : list) {
+      if (!isStrictlyInside(&e) && e.controlSuccessor &&
+          isStrictlyInside(e.controlSuccessor))
+        return true;
+      if (e.evaluationList && walk(*e.evaluationList))
+        return true;
+    }
+    return false;
+  };
+  return walk(funit->evaluationList);
+}
+
+/// True for a `do; end do` (no bounds, no while-condition), or for any
+/// construct that contains one. Such bodies can't reach the wrap's yield
+/// block, and the wrap has only reads/branches inside — RegionDCE then drops
+/// the whole scf.execute_region. Excluding the entire enclosing construct
+/// keeps the infinite loop visible in the parent CFG.
+static bool
+containsInfiniteDoConstruct(const Fortran::lower::pft::Evaluation &eval) {
+  auto isBareInfinite = [](const parser::DoConstruct *d) {
+    if (!d)
+      return false;
+    const auto &doStmt =
+        std::get<parser::Statement<parser::NonLabelDoStmt>>(d->t);
+    return !std::get<std::optional<parser::LoopControl>>(doStmt.statement.t)
+                .has_value();
+  };
+  if (isBareInfinite(eval.getIf<parser::DoConstruct>()))
+    return true;
+  if (!eval.evaluationList)
+    return false;
+  std::function<bool(const Fortran::lower::pft::EvaluationList &)> walk =
+      [&](const Fortran::lower::pft::EvaluationList &list) -> bool {
+    for (const Fortran::lower::pft::Evaluation &e : list) {
+      if (isBareInfinite(e.getIf<parser::DoConstruct>()))
+        return true;
+      if (e.evaluationList && walk(*e.evaluationList))
+        return true;
+    }
+    return false;
+  };
+  return walk(*eval.evaluationList);
+}
+
+/// True if \p eval is a DoConstruct driven directly into an enclosing acc.loop
+/// by the OpenACCLoopConstruct / OpenACCCombinedConstruct lowering — the
+/// immediate body DO, or one of the N collapsed iterator DOs reached by
+/// walking down from the body DO under a `collapse(N)` clause.
+static bool isAccLoopBody(const Fortran::lower::pft::Evaluation &eval) {
+  const auto *doConstruct = eval.getIf<parser::DoConstruct>();
+  if (!doConstruct)
+    return false;
+  // N from `collapse(N)`, or 1 if no clause. eval at depth d from the body
+  // (d == 0 means eval IS the body) is a collapsed iterator iff d < N. If the
+  // Collapse value isn't a compile-time constant, be conservative and treat
+  // every DO in the chain as collapsed (INT64_MAX) — wrapping is opt-in and
+  // a false "is collapsed" is safer than a false "is not".
+  auto collapseN = [](const parser::AccClauseList &cl) -> int64_t {
+    for (const parser::AccClause &c : cl.v)
+      if (const auto *cc = std::get_if<parser::AccClause::Collapse>(&c.u)) {
+        const auto &intExpr = std::get<parser::ScalarIntConstantExpr>(cc->v.t);
+        if (const auto *expr = semantics::GetExpr(intExpr))
+          if (auto v = evaluate::ToInt64(*expr))
+            return *v;
+        return std::numeric_limits<int64_t>::max();
+      }
+    return 1;
+  };
+  // candidates[k] is the DoConstruct at depth k above (and including) eval.
+  llvm::SmallVector<const parser::DoConstruct *, 4> candidates{doConstruct};
+  for (const Fortran::lower::pft::Evaluation *p = eval.parentConstruct; p;
+       p = p->parentConstruct) {
+    if (const auto *d = p->getIf<parser::DoConstruct>()) {
+      candidates.push_back(d);
+      continue;
+    }
+    if (const auto *acc = p->getIf<parser::OpenACCConstruct>()) {
+      const parser::DoConstruct *body = nullptr;
+      int64_t n = 1;
+      if (const auto *loop =
+              std::get_if<parser::OpenACCLoopConstruct>(&acc->u)) {
+        if (const auto &b =
+                std::get<std::optional<parser::DoConstruct>>(loop->t))
+          body = &b.value();
+        n = collapseN(std::get<parser::AccClauseList>(std::get<0>(loop->t).t));
+      } else if (const auto *comb =
+                     std::get_if<parser::OpenACCCombinedConstruct>(&acc->u)) {
+        if (const auto &b =
+                std::get<std::optional<parser::DoConstruct>>(comb->t))
+          body = &b.value();
+        n = collapseN(std::get<parser::AccClauseList>(std::get<0>(comb->t).t));
+      }
+      if (body) {
+        // body is at index `candidates.size()-1` (the outermost candidate);
+        // eval at depth (candidates.size()-1) from body. Collapsed iff < N.
+        auto it = llvm::find(candidates, body);
+        if (it != candidates.end()) {
+          int64_t depth = std::distance(candidates.begin(), it);
+          if (depth < n)
+            return true;
+        }
+      }
+    }
+    break;
+  }
+  return false;
+}
+
+/// True if any nested eval is a ReturnStmt. Its lowering creates the
+/// function's final block in the current region, which would mis-parent
+/// the func.return if that region is the wrap's.
+static bool
+containsReturnStmt(const Fortran::lower::pft::Evaluation &construct) {
+  if (!construct.evaluationList)
+    return false;
+  std::function<bool(const Fortran::lower::pft::EvaluationList &)> walk =
+      [&](const Fortran::lower::pft::EvaluationList &list) -> bool {
+    for (const Fortran::lower::pft::Evaluation &e : list) {
+      if (e.isA<parser::ReturnStmt>())
+        return true;
+      if (e.evaluationList && walk(*e.evaluationList))
+        return true;
+    }
+    return false;
+  };
+  return walk(*construct.evaluationList);
+}
+
+bool Fortran::lower::pft::isWrappableConstruct(
+    const Fortran::lower::pft::Evaluation &eval) {
+  if (!wrapUnstructuredConstructsInExecuteRegion)
+    return false;
+  if (!eval.isUnstructured)
+    return false;
+  if (!(eval.isA<Fortran::parser::DoConstruct>() ||
+        eval.isA<Fortran::parser::IfConstruct>()))
+    return false;
+  // Wrapping requires self-contained CFG.
+  return Fortran::lower::pft::branchesAreInternal(eval) &&
+         !hasIncomingBranch(eval) && !containsReturnStmt(eval) &&
+         !containsInfiniteDoConstruct(eval) && !isAccLoopBody(eval);
 }

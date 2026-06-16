@@ -48,7 +48,7 @@ end program
 ! CHECK: acc.host_data
 ! CHECK: acc.terminator
 ! CHECK: fir.call @_FortranAStopStatement
-! CHECK: fir.unreachable
+! CHECK: scf.yield
 ! CHECK: acc.parallel
 ! CHECK-COUNT-3: acc.yield
 ! CHECK: acc.terminator
