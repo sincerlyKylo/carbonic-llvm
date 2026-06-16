@@ -120,7 +120,7 @@ public:
 
 /// \returns all HWEvents triggered by \p Inst
 HWEventSet getEventsFor(const MachineInstr &Inst, const GCNSubtarget &ST,
-                        bool IsExpertMode);
+                        bool IsExpertMode, bool TgSplit);
 
 } // namespace AMDGPU
 } // namespace llvm

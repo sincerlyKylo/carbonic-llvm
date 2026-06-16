@@ -112,7 +112,7 @@ static HWEvent getVmemHWEvent(const MachineInstr &Inst, const GCNSubtarget &ST,
 
 static HWEventSet getEventsForImpl(const MachineInstr &Inst,
                                    const GCNSubtarget &ST,
-                                   const SIInstrInfo &TII) {
+                                   const SIInstrInfo &TII, bool TgSplit) {
   if (TII.isDS(Inst) && TII.usesLGKM_CNT(Inst)) {
     if (TII.isAlwaysGDS(Inst.getOpcode()) ||
         TII.hasModifiersSet(Inst, AMDGPU::OpName::gds))
@@ -133,7 +133,7 @@ static HWEventSet getEventsForImpl(const MachineInstr &Inst,
       S.insert(getVmemHWEvent(Inst, ST, TII));
     }
 
-    if (TII.mayAccessLDSThroughFlat(Inst))
+    if (TII.mayAccessLDSThroughFlat(Inst, TgSplit))
       S.insert(HWEvent::LDS_ACCESS);
     return S;
   }
@@ -194,13 +194,13 @@ static HWEventSet getEventsForImpl(const MachineInstr &Inst,
 }
 
 HWEventSet getEventsFor(const MachineInstr &Inst, const GCNSubtarget &ST,
-                        bool IsExpertMode) {
+                        bool IsExpertMode, bool TgSplit) {
   const SIInstrInfo &TII = *ST.getInstrInfo();
 
   if (IsExpertMode)
-    return getEventsForImpl(Inst, ST, TII) |
+    return getEventsForImpl(Inst, ST, TII, TgSplit) |
            getExpertSchedulingEventType(Inst, TII);
-  return getEventsForImpl(Inst, ST, TII);
+  return getEventsForImpl(Inst, ST, TII, TgSplit);
 }
 } // namespace AMDGPU
 } // namespace llvm
