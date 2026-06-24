@@ -277,6 +277,8 @@ private:
   mlir::LLVM::TargetFeaturesAttr targetFeatures;
 };
 
+bool isMetadirectiveEval(lower::pft::Evaluation &eval);
+
 } // namespace omp
 } // namespace lower
 } // namespace Fortran
