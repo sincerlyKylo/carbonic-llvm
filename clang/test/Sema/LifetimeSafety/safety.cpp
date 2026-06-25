@@ -3955,6 +3955,7 @@ struct [[gsl::Pointer()]] PtrWithInt { int x; };
 PtrWithInt f() {
   return PtrWithInt{10};
 }
+
 // A GNU statement expression (`({ ...; e; })`) yields the value of its final
 // expression `e`. `e`'s origins flow into the statement expression's value, so
 // a borrow `e` carries is tracked: a borrow of a body-local dangles, and a
@@ -4024,3 +4025,19 @@ void discarded_body_local() {
   (void)({ int x = 7; &x; }); // no-warning
 }
 } // namespace statement_expression
+
+// Test case for false positive involving conditional operator in a loop.
+struct LoopCondBindS {
+  int* get() const [[clang::lifetimebound]];
+};
+void consume_loop_cond_bind(int*);
+void test_loop_cond_bind(bool cond) {
+  for (int i = 0; i < 2; i++) {
+    LoopCondBindS s;
+    consume_loop_cond_bind(cond ? s.get() : nullptr); // no-warning
+  }
+  for (int i = 0; i < 2; i++) {
+    int x, y;
+    consume_loop_cond_bind(cond ? &x : &y); // no-warning
+  }
+}
