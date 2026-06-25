@@ -699,7 +699,7 @@ static void processTileSizesFromOpenMPConstruct(
   }
 }
 
-pft::Evaluation *getNestedDoConstruct(pft::Evaluation &eval) {
+pft::Evaluation *tryGetNestedDoConstruct(pft::Evaluation &eval) {
   for (pft::Evaluation &nested : eval.getNestedEvaluations()) {
     // In an OpenMPConstruct there can be compiler directives:
     // 1 <<OpenMPConstruct>>
@@ -719,10 +719,17 @@ pft::Evaluation *getNestedDoConstruct(pft::Evaluation &eval) {
     // Loop transformations can introduce nested OpenMP
     // constructs between the directive and the actual do-loop nest.
     if (nested.getIf<parser::OpenMPConstruct>())
-      return getNestedDoConstruct(nested);
-    assert(false && "Unexpected construct in the nested evaluations");
+      return tryGetNestedDoConstruct(nested);
+    // Anything else means the perfectly-nested do-loop nest ends here.
+    return nullptr;
   }
-  llvm_unreachable("Expected do loop to be in the nested evaluations");
+  return nullptr;
+}
+
+pft::Evaluation *getNestedDoConstruct(pft::Evaluation &eval) {
+  pft::Evaluation *doEval = tryGetNestedDoConstruct(eval);
+  assert(doEval && "Expected do loop to be in the nested evaluations");
+  return doEval;
 }
 
 /// Return true if \p eval holds a metadirective.

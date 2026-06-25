@@ -4931,8 +4931,10 @@ static void markSequentialLoopIVs(
 
 /// Mark loop induction variable data-sharing attributes for a
 /// metadirective-selected loop variant. Semantic analysis cannot mark these
-/// because the variant is resolved at lowering time.
-static void
+/// because the variant is resolved at lowering time. Returns false if the
+/// associated loop nest is shallower than the variant's COLLAPSE/ORDERED
+/// requires, leaving the diagnostic to the caller.
+static bool
 markMetadirectiveLoopIVs(semantics::SemanticsContext &semaCtx,
                          const parser::OmpDirectiveSpecification &spec,
                          lower::pft::Evaluation &loopEval,
@@ -4942,7 +4944,7 @@ markMetadirectiveLoopIVs(semantics::SemanticsContext &semaCtx,
   auto [depth, _] = semantics::omp::GetAffectedNestDepthWithReason(
       spec, semaCtx.langOptions().OpenMPVersion, &semaCtx);
   if (!depth || !depth.value || *depth.value <= 0)
-    return;
+    return true;
 
   int64_t affectedDepth = *depth.value;
   bool isSimdVariant =
@@ -4958,12 +4960,16 @@ markMetadirectiveLoopIVs(semantics::SemanticsContext &semaCtx,
 
   lower::pft::Evaluation *doEval = &loopEval;
   for (int64_t level = 0; level < affectedDepth; ++level) {
-    assert(doEval->getIf<parser::DoConstruct>() &&
-           "expected associated DO construct");
+    // A nest shallower than COLLAPSE/ORDERED requires is diagnosed during
+    // semantic analysis in check-omp-variant. Guard against it here too,
+    // returning false so the caller handles it instead of asserting in
+    // `getNestedDoConstruct`.
+    if (!doEval || !doEval->getIf<parser::DoConstruct>())
+      return false;
     if (semantics::Symbol *sym = getIterationVariableSymbol(*doEval))
       dsaGuard.setSymbolDSA(*sym, ivDSA);
     if (level + 1 < affectedDepth)
-      doEval = getNestedDoConstruct(*doEval);
+      doEval = tryGetNestedDoConstruct(*doEval);
   }
 
   // A variant that generates a parallel, task, or (>= 5.2) teams region also
@@ -4987,6 +4993,7 @@ markMetadirectiveLoopIVs(semantics::SemanticsContext &semaCtx,
     markSequentialLoopIVs(*doEval, dsaGuard, clauseSyms,
                           semaCtx.langOptions().OpenMPVersion);
   }
+  return true;
 }
 
 static void genMetadirective(lower::AbstractConverter &converter,
@@ -5213,7 +5220,10 @@ static void genMetadirective(lower::AbstractConverter &converter,
       if (!loopEval)
         TODO(variantLoc, "loop-associated METADIRECTIVE without associated DO");
       SymbolDSAGuard dsaGuard;
-      markMetadirectiveLoopIVs(semaCtx, *spec, *loopEval, dsaGuard);
+      if (!markMetadirectiveLoopIVs(semaCtx, *spec, *loopEval, dsaGuard))
+        TODO(variantLoc, "METADIRECTIVE variant with COLLAPSE or ORDERED "
+                         "requires a deeper perfectly-nested loop nest than "
+                         "is present");
       genOMPDispatch(converter, symTable, semaCtx, eval, variantLoc, queue,
                      queue.begin());
       return;
