@@ -4893,6 +4893,42 @@ private:
       savedFlags;
 };
 
+/// Mark the iteration variable of every sequential DO loop nested in a
+/// metadirective variant's generated region as private, mirroring
+/// OmpAttributeVisitor::ResolveSeqLoopIndexInParallelOrTaskConstruct, which
+/// cannot run because the variant is only resolved during lowering.
+static void markSequentialLoopIVs(
+    lower::pft::Evaluation &eval, SymbolDSAGuard &dsaGuard,
+    const llvm::SmallPtrSetImpl<const semantics::Symbol *> &clauseSyms,
+    unsigned version) {
+  using Symbol = semantics::Symbol;
+  if (!eval.hasNestedEvaluations())
+    return;
+  for (lower::pft::Evaluation &nested : eval.getNestedEvaluations()) {
+    // A nested construct with its own data environment (parallel, task, teams,
+    // or target) owns the loops it contains, so do not descend into it. A
+    // nested unresolved metadirective is not special-cased: privatizing its
+    // sibling loop index here too is benign for a loop index.
+    if (const auto *ompConstruct = nested.getIf<parser::OpenMPConstruct>()) {
+      llvm::omp::Directive dir =
+          parser::omp::GetOmpDirectiveName(*ompConstruct).v;
+      if (llvm::omp::allParallelSet.test(dir) ||
+          llvm::omp::taskGeneratingSet.test(dir) ||
+          llvm::omp::allTargetSet.test(dir) ||
+          (version >= 52 && llvm::omp::allTeamsSet.test(dir)))
+        continue;
+    }
+    // Skip an index that already has a DSA: predetermined (the variant's own
+    // associated loops and nested loop-construct indices) or clause-named.
+    if (nested.getIf<parser::DoConstruct>())
+      if (Symbol *sym = getIterationVariableSymbol(nested))
+        if (!sym->test(Symbol::Flag::OmpPreDetermined) &&
+            !clauseSyms.contains(sym))
+          dsaGuard.setSymbolDSA(*sym, Symbol::Flag::OmpPrivate);
+    markSequentialLoopIVs(nested, dsaGuard, clauseSyms, version);
+  }
+}
+
 /// Mark loop induction variable data-sharing attributes for a
 /// metadirective-selected loop variant. Semantic analysis cannot mark these
 /// because the variant is resolved at lowering time.
@@ -4928,6 +4964,28 @@ markMetadirectiveLoopIVs(semantics::SemanticsContext &semaCtx,
       dsaGuard.setSymbolDSA(*sym, ivDSA);
     if (level + 1 < affectedDepth)
       doEval = getNestedDoConstruct(*doEval);
+  }
+
+  // A variant that generates a parallel, task, or (>= 5.2) teams region also
+  // privatizes the index of every nested sequential loop. `doEval` is the
+  // innermost associated loop, so its body holds those loops.
+  bool variantGeneratesParallelRegion =
+      llvm::omp::allParallelSet.test(spec.DirId()) ||
+      llvm::omp::taskGeneratingSet.test(spec.DirId()) ||
+      (semaCtx.langOptions().OpenMPVersion >= 52 &&
+       llvm::omp::allTeamsSet.test(spec.DirId()));
+  if (variantGeneratesParallelRegion) {
+    // Indices named in the variant's own clauses already have an explicit DSA;
+    // exclude them so the marking below does not override it.
+    llvm::SmallPtrSet<const semantics::Symbol *, 4> clauseSyms;
+    for (const parser::OmpClause &clause : spec.Clauses().v)
+      if (const parser::OmpObjectList *objects =
+              parser::omp::GetOmpObjectList(clause))
+        for (const parser::OmpObject &object : objects->v)
+          if (const semantics::Symbol *sym = makeObject(object, semaCtx).sym())
+            clauseSyms.insert(sym);
+    markSequentialLoopIVs(*doEval, dsaGuard, clauseSyms,
+                          semaCtx.langOptions().OpenMPVersion);
   }
 }
 

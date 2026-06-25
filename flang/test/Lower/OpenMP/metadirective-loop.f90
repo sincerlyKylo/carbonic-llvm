@@ -337,3 +337,140 @@ subroutine test_block_nested_parallel_do(n, a)
     end do
   end block
 end subroutine
+
+!===----------------------------------------------------------------------===!
+! Inner sequential loop induction-variable privatization
+!===----------------------------------------------------------------------===!
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_seq_inner(
+! CHECK:         omp.parallel {
+! CHECK:           omp.wsloop private({{.*}}_QFtest_parallel_do_seq_innerEi_private_i32{{.*}}_QFtest_parallel_do_seq_innerEk_private_i32{{.*}}) {
+! CHECK:             omp.loop_nest
+subroutine test_parallel_do_seq_inner(n, a)
+  integer :: n
+  integer :: a(n, n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    do k = 1, n
+      a(k, i) = k
+    end do
+  end do
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_do_seq_inner_shared(
+! CHECK:         omp.wsloop private(
+! CHECK-NOT:       _QFtest_do_seq_inner_sharedEk_private
+! CHECK:           omp.loop_nest
+subroutine test_do_seq_inner_shared(n, a)
+  integer :: n
+  integer :: a(n, n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    do k = 1, n
+      a(k, i) = k
+    end do
+  end do
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_critical_inner(
+! CHECK:         omp.parallel {
+! CHECK:           omp.wsloop private({{.*}}_QFtest_parallel_do_critical_innerEi_private_i32{{.*}}_QFtest_parallel_do_critical_innerEk_private_i32{{.*}}) {
+! CHECK:             omp.loop_nest
+! CHECK:               omp.critical
+subroutine test_parallel_do_critical_inner(n, a)
+  integer :: n
+  integer :: a(n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    !$omp critical
+    do k = 1, n
+      a(k) = k
+    end do
+    !$omp end critical
+  end do
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_inner_shared(
+! CHECK:         omp.wsloop private(
+! CHECK:           omp.loop_nest
+! CHECK:             omp.parallel {
+! CHECK-NOT:           _QFtest_parallel_do_inner_sharedEk_private
+subroutine test_parallel_do_inner_shared(n, a)
+  integer :: n
+  integer :: a(n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    !$omp parallel shared(k)
+    do k = 1, n
+      a(k) = k
+    end do
+    !$omp end parallel
+  end do
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_reduction_iv(
+! CHECK:         omp.wsloop private(@_QFtest_parallel_do_reduction_ivEi_private_i32 {{[^,]*}}) reduction(@add_reduction_i32 {{.*}}) {
+subroutine test_parallel_do_reduction_iv(n, a)
+  integer :: n
+  integer :: a(n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do reduction(+:k)) &
+  !$omp & default(nothing)
+  do i = 1, n
+    do k = 1, n
+      a(k) = k
+    end do
+  end do
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_enclosing_shared(
+! CHECK:         omp.wsloop private({{.*}}_QFtest_parallel_do_enclosing_sharedEi_private_i32{{.*}}_QFtest_parallel_do_enclosing_sharedEk_private_i32{{.*}}) {
+! CHECK:           omp.loop_nest
+subroutine test_parallel_do_enclosing_shared(n, a)
+  integer :: n
+  integer :: a(n)
+  integer :: i, k
+  !$omp parallel shared(k)
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    do k = 1, n
+      a(k) = k
+    end do
+  end do
+  !$omp end parallel
+end subroutine
+
+! CHECK-LABEL: func.func @_QPtest_parallel_do_target_inner(
+! CHECK:         omp.wsloop private(@_QFtest_parallel_do_target_innerEi_private_i32 {{[^,]*}}) {
+! CHECK:           omp.target
+! CHECK-NOT:         _QFtest_parallel_do_target_innerEk_private_i32
+subroutine test_parallel_do_target_inner(n, a)
+  integer :: n
+  integer :: a(n)
+  integer :: i, k
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(llvm)}: parallel do) &
+  !$omp & default(nothing)
+  do i = 1, n
+    !$omp target map(tofrom: a)
+    do k = 1, n
+      a(k) = k
+    end do
+    !$omp end target
+  end do
+end subroutine
