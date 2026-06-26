@@ -581,6 +581,63 @@ void testGreedyRewriteDriverConfig(MlirContext ctx) {
   mlirGreedyRewriteDriverConfigDestroy(config);
 }
 
+static bool dynamicLegalityAlwaysLegal(MlirOperation op, void *userData) {
+  (void)op;
+  intptr_t *counter = (intptr_t *)userData;
+  (*counter)++;
+  return true;
+}
+
+static bool dynamicLegalityAlwaysIllegal(MlirOperation op, void *userData) {
+  (void)op;
+  intptr_t *counter = (intptr_t *)userData;
+  (*counter)++;
+  return false;
+}
+
+void testConversionTargetDynamicLegality(MlirContext ctx) {
+  // CHECK-LABEL: @testConversionTargetDynamicLegality
+  fprintf(stderr, "@testConversionTargetDynamicLegality\n");
+
+  MlirConversionTarget target = mlirConversionTargetCreate(ctx);
+
+  // Test addDynamicallyLegalOp
+  intptr_t legalCounter = 0;
+  mlirConversionTargetAddDynamicallyLegalOp(
+      target, mlirStringRefCreateFromCString("dialect.op1"),
+      dynamicLegalityAlwaysLegal, &legalCounter);
+
+  // Test addDynamicallyLegalDialect
+  intptr_t dialectCounter = 0;
+  mlirConversionTargetAddDynamicallyLegalDialect(
+      target, mlirStringRefCreateFromCString("dialect"),
+      dynamicLegalityAlwaysIllegal, &dialectCounter);
+
+  // Test markOpRecursivelyLegal (with callback) - op must be legal first
+  intptr_t recursiveCounter = 0;
+  mlirConversionTargetAddLegalOp(
+      target, mlirStringRefCreateFromCString("builtin.module"));
+  mlirConversionTargetMarkOpRecursivelyLegal(
+      target, mlirStringRefCreateFromCString("builtin.module"),
+      dynamicLegalityAlwaysLegal, &recursiveCounter);
+
+  // Test markOpRecursivelyLegal (without callback - NULL) - op must be legal
+  mlirConversionTargetAddLegalOp(target,
+                                 mlirStringRefCreateFromCString("func.func"));
+  mlirConversionTargetMarkOpRecursivelyLegal(
+      target, mlirStringRefCreateFromCString("func.func"), NULL, NULL);
+
+  // Test markUnknownOpDynamicallyLegal
+  intptr_t unknownCounter = 0;
+  mlirConversionTargetMarkUnknownOpDynamicallyLegal(
+      target, dynamicLegalityAlwaysLegal, &unknownCounter);
+
+  mlirConversionTargetDestroy(target);
+
+  // CHECK: testConversionTargetDynamicLegality: PASSED
+  fprintf(stderr, "testConversionTargetDynamicLegality: PASSED\n");
+}
+
 int main(void) {
   MlirContext ctx = mlirContextCreate();
   mlirContextSetAllowUnregisteredDialects(ctx, true);
@@ -595,6 +652,7 @@ int main(void) {
   testOpModification(ctx);
   testReplaceUses(ctx);
   testGreedyRewriteDriverConfig(ctx);
+  testConversionTargetDynamicLegality(ctx);
 
   mlirContextDestroy(ctx);
   return 0;

@@ -568,6 +568,50 @@ void mlirConversionTargetAddIllegalDialect(MlirConversionTarget target,
   unwrap(target)->addIllegalDialect(unwrap(dialectName));
 }
 
+void mlirConversionTargetAddDynamicallyLegalOp(
+    MlirConversionTarget target, MlirStringRef opName,
+    MlirConversionTargetDynamicLegalityCallback callback, void *userData) {
+  MLIRContext *ctx = &unwrap(target)->getContext();
+  OperationName name(unwrap(opName), ctx);
+  unwrap(target)->addDynamicallyLegalOp(
+      name, [callback, userData](Operation *op) -> std::optional<bool> {
+        return callback(wrap(op), userData);
+      });
+}
+
+void mlirConversionTargetAddDynamicallyLegalDialect(
+    MlirConversionTarget target, MlirStringRef dialectName,
+    MlirConversionTargetDynamicLegalityCallback callback, void *userData) {
+  unwrap(target)->addDynamicallyLegalDialect(
+      [callback, userData](Operation *op) -> std::optional<bool> {
+        return callback(wrap(op), userData);
+      },
+      unwrap(dialectName));
+}
+
+void mlirConversionTargetMarkOpRecursivelyLegal(
+    MlirConversionTarget target, MlirStringRef opName,
+    MlirConversionTargetDynamicLegalityCallback callback, void *userData) {
+  MLIRContext *ctx = &unwrap(target)->getContext();
+  OperationName name(unwrap(opName), ctx);
+  ConversionTarget::DynamicLegalityCallbackFn fn;
+  if (callback) {
+    fn = [callback, userData](Operation *op) -> std::optional<bool> {
+      return callback(wrap(op), userData);
+    };
+  }
+  unwrap(target)->markOpRecursivelyLegal(name, fn);
+}
+
+void mlirConversionTargetMarkUnknownOpDynamicallyLegal(
+    MlirConversionTarget target,
+    MlirConversionTargetDynamicLegalityCallback callback, void *userData) {
+  unwrap(target)->markUnknownOpDynamicallyLegal(
+      [callback, userData](Operation *op) -> std::optional<bool> {
+        return callback(wrap(op), userData);
+      });
+}
+
 //===----------------------------------------------------------------------===//
 /// TypeConverter API
 //===----------------------------------------------------------------------===//
