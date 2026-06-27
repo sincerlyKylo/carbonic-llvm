@@ -53,6 +53,9 @@ protected:
 
     ID_Offload, // Offloading binary file.
 
+    ID_CEXKernelCollection,
+    ID_CEXSharedCache,
+
     // Object and children.
     ID_StartObjects,
     ID_COFF,
@@ -73,7 +76,8 @@ protected:
     ID_GOFF,
     ID_Wasm,
     ID_DXContainer,
-
+    ID_CEX,
+    
     ID_EndObjects
   };
 
@@ -120,6 +124,14 @@ public:
     return TypeID == ID_MachOUniversalBinary;
   }
 
+  bool isCEXKernelCollection() const {
+    return TypeID == ID_CEXKernelCollection;
+  }
+
+  bool isCEXSharedCache() const {
+    return TypeID == ID_CEXSharedCache;
+  }
+
   bool isTapiUniversal() const { return TypeID == ID_TapiUniversal; }
 
   bool isELF() const {
@@ -154,6 +166,8 @@ public:
 
   bool isTapiFile() const { return TypeID == ID_TapiFile; }
 
+  bool isCEXExecutable() const { return TypeID == ID_CEX; }
+
   bool isLittleEndian() const {
     return !(TypeID == ID_ELF32B || TypeID == ID_ELF64B ||
              TypeID == ID_MachO32B || TypeID == ID_MachO64B ||
@@ -173,6 +187,8 @@ public:
       return Triple::ELF;
     if (isGOFF())
       return Triple::GOFF;
+    if(isCEXExecutable())
+      return Triple::CEX;
     return Triple::UnknownObjectFormat;
   }
 
