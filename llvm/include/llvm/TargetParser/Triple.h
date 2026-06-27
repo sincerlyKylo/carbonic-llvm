@@ -261,7 +261,8 @@ public:
     Firmware,
     QURT,
     H2,
-    LastOSType = H2
+    CarbonOS,
+    LastOSType = CarbonOS
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -339,6 +340,7 @@ public:
     SPIRV,
     Wasm,
     XCOFF,
+    CEX,
   };
 
 private:

@@ -11,8 +11,10 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/BinaryFormat/CEX.h"
 
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <unistd.h>
@@ -96,6 +98,9 @@ file_magic llvm::identify_magic(StringRef Magic) {
       return file_magic::bitcode;
     break;
   case 'C':
+    if(Magic.starts_with(StringRef("CEX\0", 4))) {
+      return llvm::CEX::GetCEXFileMagic(Magic);
+    }
     if (startswith(Magic, "CCOB"))
       return file_magic::offload_bundle_compressed;
     if (startswith(Magic, "CPCH"))

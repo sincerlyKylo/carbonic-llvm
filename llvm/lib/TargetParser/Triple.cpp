@@ -509,6 +509,8 @@ StringRef Triple::getOSTypeName(OSType Kind) {
     return "qurt";
   case H2:
     return "h2";
+  case CarbonOS: 
+    return "carbon";
   }
 
   llvm_unreachable("Invalid OSType");
@@ -649,6 +651,8 @@ StringRef Triple::getObjectFormatTypeName(ObjectFormatType Kind) {
     return "dxcontainer";
   case SPIRV:
     return "spirv";
+  case CEX:
+    return "cex";
   }
   llvm_unreachable("unknown object format type");
 }
@@ -980,6 +984,7 @@ static Triple::OSType parseOS(StringRef OSName) {
       .StartsWith("firmware", Triple::Firmware)
       .StartsWith("qurt", Triple::QURT)
       .StartsWith("h2", Triple::H2)
+      .StartsWith("carbon", Triple::CarbonOS)
       .Default(Triple::UnknownOS);
 }
 
@@ -1205,6 +1210,8 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
     case Triple::Win32:
     case Triple::UEFI:
       return Triple::COFF;
+    case Triple::CarbonOS:
+      return Triple::ELF; //TODO: Replace with CEX once the MC layer is implemented
     default:
       return T.isOSDarwin() ? Triple::MachO : Triple::ELF;
     }

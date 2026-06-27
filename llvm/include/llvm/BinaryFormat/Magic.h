@@ -60,6 +60,16 @@ struct file_magic {
     offload_bundle,            ///< Clang offload bundle file
     offload_bundle_compressed, ///< Compressed clang offload bundle file
     spirv_object,              ///< A binary SPIR-V file
+
+    cex_object,
+    cex_kernel,
+    cex_kernelcollection,
+    cex_executable,
+    cex_dynamiclibrary,
+    cex_staticlibrary,
+    cex_system_driver,
+    cex_user_driver,
+    cex_shared_cache,
   };
 
   bool is_object() const { return V != unknown; }
