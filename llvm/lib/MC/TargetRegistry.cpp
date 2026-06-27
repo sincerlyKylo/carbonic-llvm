@@ -39,6 +39,7 @@ MCStreamer *Target::createMCObjectStreamer(
     const MCSubtargetInfo &STI) const {
   MCStreamer *S = nullptr;
   switch (T.getObjectFormat()) {
+  case Triple::CEX:
   case Triple::UnknownObjectFormat:
     llvm_unreachable("Unknown object format");
   case Triple::COFF:

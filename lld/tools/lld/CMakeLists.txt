@@ -32,6 +32,7 @@ lld_target_link_libraries(lld
   lldMachO
   lldMinGW
   lldWasm
+  lldCex
   )
 
 if(NOT LLD_SYMLINKS_TO_CREATE)

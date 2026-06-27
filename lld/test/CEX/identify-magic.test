@@ -1,0 +1,11 @@
+; RUN: yaml2obj %s -o %t.cex
+; RUN: llvm-readobj --file-headers %t.cex | FileCheck %s
+
+; CHECK: Format: CEX-Executable
+; CHECK: Architecture: aarch64
+
+--- !CEX-Binary
+Header:
+  Magic:           7FC4558    # Equivalent to your \x7fCEX bytes
+  FileType:        3          # Your enum for cex_executable
+...

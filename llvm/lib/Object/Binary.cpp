@@ -103,6 +103,16 @@ Expected<std::unique_ptr<Binary>> object::createBinary(MemoryBufferRef Buffer,
     return MinidumpFile::create(Buffer);
   case file_magic::tapi_file:
     return TapiUniversal::create(Buffer);
+  case file_magic::cex_dynamiclibrary:
+  case file_magic::cex_executable:
+  case file_magic::cex_kernel:
+  case file_magic::cex_kernelcollection:
+  case file_magic::cex_user_driver:
+  case file_magic::cex_shared_cache:
+  case file_magic::cex_system_driver:
+  case file_magic::cex_staticlibrary:
+  case llvm::file_magic::cex_object:
+    return errorCodeToError(object_error::invalid_file_type);
   }
   llvm_unreachable("Unexpected Binary File Type");
 }
