@@ -1,5 +1,5 @@
 add_lld_library(lldCex
-  CexDriver.cpp
+  Driver.cpp
 
   LINK_COMPONENTS
   Support
