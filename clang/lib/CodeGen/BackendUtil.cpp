@@ -49,6 +49,7 @@
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -296,6 +297,8 @@ static bool asanUseGlobalsGC(const Triple &T, const CodeGenOptions &CGOpts) {
   case Triple::DXContainer:
   case Triple::SPIRV:
   case Triple::UnknownObjectFormat:
+  case Triple::CEX:
+    llvm::report_fatal_error("ASan not implemented for CEX");
     break;
   }
   return false;
