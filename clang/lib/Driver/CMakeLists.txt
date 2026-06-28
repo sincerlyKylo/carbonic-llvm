@@ -100,6 +100,8 @@ add_clang_library(clangDriver
   ToolChains/PPCFreeBSD.cpp
   ToolChains/InterfaceStubs.cpp
   ToolChains/ZOS.cpp
+  ToolChains/CarbonOS/Toolchain.cpp
+  ToolChains/CarbonOS/CarbonSDKManager.cpp
   Types.cpp
   XRayArgs.cpp
 
