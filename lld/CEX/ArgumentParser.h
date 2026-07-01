@@ -54,6 +54,10 @@ public:
     bool GetFlag(llvm::StringRef ArgName, Aliases... Alias) const {
         return GetFlag(ArgName) || GetFlag(Alias...);
     }
+    
+    const llvm::SmallVector<llvm::StringRef, 16>& GetFiles() const { return Files; }
+    const llvm::StringMap<std::string>& GetArguments() const { return Arguments; }
+    const llvm::StringSet<>& GetFlags() const { return Flags; }
 private:
     llvm::StringMap<std::string> Arguments;
     llvm::StringSet<> Flags;

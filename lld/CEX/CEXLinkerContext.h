@@ -24,8 +24,8 @@ class CEXLinkerContext : public CommonLinkerContext {
     llvm::StringRef OutputFile = "a.cex"; // -o
     llvm::StringRef EntrySymbol = "main"; //-e / --entry
     uint64_t ImageBase = 0x400000; // --image-base / -b
-    uint64_t PageSize = 0x1000; // 4KB default for AArch64 compatibility, --page-size = <hex>
-    uint64_t StackSize = 0; //0 = Don't assume a custom stack size, --stack-size = <hex>
+    uint64_t PageSize = 0x1000; // 4KB default for AArch64 compatibility, --page-size <hex>
+    uint64_t StackSize = 0; //0 = Don't assume a custom stack size, --stack-size <hex>
     FileType Type;
     // Core inputs
     llvm::SmallVector<llvm::StringRef, 16> ObjectFiles; //files, positrional arguments wiith nothing else 
@@ -39,11 +39,10 @@ class CEXLinkerContext : public CommonLinkerContext {
     
     // System configuration
     //--sysroot
-    llvm::StringRef MapFile = ""; //-map = <file>
+    llvm::StringRef MapFile = ""; //-map <file>
 
     // Behavioral flags
     bool ShowHelp = false; //-h or --help
-    bool ForceNoPIE = false; //--force-no-pie
     bool ForceNoPIC = false; //--force-no-pie
     bool Static = false; //--static or -s
     bool Strip = false;  //--strip

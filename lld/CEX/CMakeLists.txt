@@ -3,6 +3,7 @@ add_lld_library(lldCex
   ArgumentParser.cpp
   CEXLinkerContext.cpp
   CEXLinkerServer.cpp
+  Tests.cpp
 
   LINK_COMPONENTS
   Support
