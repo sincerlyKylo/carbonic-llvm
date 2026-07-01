@@ -67,6 +67,8 @@ CEXLinkerServer::CEXLinkerServer(CEXLinkerContext &ctx) : ctx(ctx) {}
 void CEXLinkerServer::linkerMain(llvm::ArrayRef<const char *>& Arguments) {
     ctx.ArgParser.ParseArguments(Arguments);
     TestParser(ctx.ArgParser);
+
+    ctx.BuildOptions();
 }
 CEXLinkerServer::~CEXLinkerServer() {}
 } // namespace cex
