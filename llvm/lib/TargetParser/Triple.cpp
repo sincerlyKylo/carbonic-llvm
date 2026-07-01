@@ -1057,6 +1057,7 @@ static Triple::ObjectFormatType parseFormat(StringRef EnvironmentName) {
       .EndsWith("macho", Triple::MachO)
       .EndsWith("wasm", Triple::Wasm)
       .EndsWith("spirv", Triple::SPIRV)
+      .EndsWith("cex",  Triple::CEX)
       .Default(Triple::UnknownObjectFormat);
 }
 
@@ -1211,7 +1212,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
     case Triple::UEFI:
       return Triple::COFF;
     case Triple::CarbonOS:
-      return Triple::ELF; //TODO: Replace with CEX once the MC layer is implemented
+      return Triple::CEX; 
     default:
       return T.isOSDarwin() ? Triple::MachO : Triple::ELF;
     }
