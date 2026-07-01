@@ -1,0 +1,46 @@
+/* CarbonOS Native Linker Script Spec */
+
+PROGRAM "MainSubsystem" {
+    Architecture = ARM64;
+    EntryPoint   = _start;
+
+    /* 1. Define the logical section layout for this specific program */
+    SECTIONS {
+        . = 0x400000;       /* Initialize virtual address counter for this program */
+        
+        .text : { 
+            *(.text._start)
+            *(.text .text.*) 
+        }
+        
+        .rodata : { 
+            *(.rodata .rodata.*) 
+        }
+
+        . = ALIGN(4096);    /* Align to page boundary for data separation */
+        
+        .data : { 
+            _data_start = .;
+            *(.data .data.*) 
+            _data_end = .;
+        }
+        
+        .bss : { 
+            _bss_start = .;
+            *(.bss .bss.*) 
+            *(COMMON) 
+            _bss_end = .;
+        }
+    }
+
+    /* 2. Map the defined sections into containerized Load Commands */
+    LOAD_COMMAND "TextSegment" {
+        Permissions = RX;
+        UseSections = [ .text, .rodata ];
+    }
+
+    LOAD_COMMAND "DataSegment" {
+        Permissions = RW;
+        UseSections = [ .data, .bss ];
+    }
+}
