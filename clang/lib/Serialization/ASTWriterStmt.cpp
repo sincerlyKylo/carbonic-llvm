@@ -3258,6 +3258,22 @@ void ASTStmtWriter::VisitHLSLOutArgExpr(HLSLOutArgExpr *S) {
   Code = serialization::EXPR_HLSL_OUT_ARG;
 }
 
+void ASTStmtWriter::VisitGrafitCXXConstructAt(GrafitCXXConstructAt* E) {
+  VisitStmt(E);
+  Record.AddSourceLocation(E->getBeginLoc());
+  Record.AddSourceLocation(E->getTypeLoc());
+  Record.AddSourceLocation(E->getDestLoc());
+  Record.AddSourceLocation(E->getEndLoc());
+
+  // Manually write out the child expression pointers
+  Record.AddStmt(E->getDestination());
+  Record.AddStmt(E->getInitializer());
+
+  Record.AddTypeRef(E->getConstructedType());
+
+  Code = serialization::EXPR_GRAFIT_CXX_CONSTRUCT_AT;
+}
+
 //===----------------------------------------------------------------------===//
 // ASTWriter Implementation
 //===----------------------------------------------------------------------===//

@@ -102,6 +102,7 @@ add_clang_library(clangSema
   SemaWasm.cpp
   SemaX86.cpp
   TypeLocBuilder.cpp
+  SemaGrafit.cpp
 
   DEPENDS
   ClangOpenCLBuiltinsImpl

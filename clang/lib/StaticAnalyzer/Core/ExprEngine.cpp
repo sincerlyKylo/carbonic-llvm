@@ -2066,6 +2066,9 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::EmbedExprClass:
       // Fall through.
 
+    //TODO:: Implement proper static analysis
+    case Stmt::GrafitCXXConstructAtClass:
+
     // Cases we intentionally don't evaluate, since they don't need
     // to be explicitly evaluated.
     case Stmt::PredefinedExprClass:
@@ -2373,6 +2376,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
                                        Pred, Dst);
       break;
     }
+
 }
 
 bool ExprEngine::replayWithoutInlining(ExplodedNode *N,

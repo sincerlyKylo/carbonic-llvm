@@ -5767,6 +5767,8 @@ private:
   llvm::Value *FormAArch64ResolverCondition(const FMVResolverOption &RO);
   llvm::Value *EmitAArch64CpuSupports(const CallExpr *E);
   llvm::Value *EmitAArch64CpuSupports(ArrayRef<StringRef> FeatureStrs);
+public:
+  llvm::Value *EmitGrafitCXXConstructAt(const GrafitCXXConstructAt *E);
 };
 
 inline DominatingLLVMValue::saved_type

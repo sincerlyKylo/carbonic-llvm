@@ -3094,6 +3094,18 @@ void ASTStmtReader::VisitHLSLOutArgExpr(HLSLOutArgExpr *S) {
   S->IsInOut = Record.readBool();
 }
 
+void ASTStmtReader::VisitGrafitCXXConstructAt(GrafitCXXConstructAt* E) {
+  VisitStmt(E);
+  E->OpLocation = readSourceLocation();
+  E->TLocation = readSourceLocation();
+  E->DestLocation = readSourceLocation();
+  E->EndLocation = readSourceLocation();
+
+  E->Children[GrafitCXXConstructAt::DestIdx] = Record.readSubStmt();
+  E->Children[GrafitCXXConstructAt::InitialiserIdx] = Record.readSubStmt();
+  E->ConstructedType = Record.readType();
+}
+
 //===----------------------------------------------------------------------===//
 // ASTReader Implementation
 //===----------------------------------------------------------------------===//
@@ -4701,6 +4713,10 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       break;
     case EXPR_REFLECT: {
       S = CXXReflectExpr::CreateEmpty(Context);
+      break;
+    }
+    case EXPR_GRAFIT_CXX_CONSTRUCT_AT: {
+      S = GrafitCXXConstructAt::CreateEmpty(Context);
       break;
     }
     }

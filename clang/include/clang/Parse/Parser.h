@@ -9140,6 +9140,8 @@ private:
   isCXX11AttributeSpecifier(bool Disambiguate = false,
                             bool OuterMightBeMessageSend = false);
 
+  ExprResult ParseGrafitCXXConstructAtExpression(SourceLocation Start);
+
   ///@}
 };
 

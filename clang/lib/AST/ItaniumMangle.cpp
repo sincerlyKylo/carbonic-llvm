@@ -5131,6 +5131,7 @@ recurse:
   case Expr::CXXInheritedCtorInitExprClass:
   case Expr::CXXParenListInitExprClass:
   case Expr::CXXExpansionSelectExprClass:
+  case Expr::GrafitCXXConstructAtClass:
     llvm_unreachable("unexpected statement kind");
 
   case Expr::ConstantExprClass:

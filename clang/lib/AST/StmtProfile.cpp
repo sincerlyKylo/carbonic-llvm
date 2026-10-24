@@ -3074,3 +3074,7 @@ void Stmt::ProcessODRHash(llvm::FoldingSetNodeID &ID,
   StmtProfilerWithoutPointers Profiler(ID, Hash);
   Profiler.Visit(this);
 }
+
+void StmtProfiler::VisitGrafitCXXConstructAt(const GrafitCXXConstructAt *S) {
+  VisitExpr(S);
+}

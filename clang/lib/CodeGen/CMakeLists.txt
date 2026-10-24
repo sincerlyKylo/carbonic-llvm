@@ -163,6 +163,7 @@ add_clang_library(clangCodeGen
   Targets/Xtensa.cpp
   TrapReasonBuilder.cpp
   VarBypassDetector.cpp
+  CGGrafitCXX.cpp
 
   DISABLE_PCH_REUSE # PCH contains private headers
   PRECOMPILE_HEADERS

@@ -3101,3 +3101,8 @@ void Stmt::printJson(raw_ostream &Out, PrinterHelper *Helper,
 
 // Implement virtual destructor.
 PrinterHelper::~PrinterHelper() = default;
+
+// Grafit C++ extensions
+void StmtPrinter::VisitGrafitCXXConstructAt(GrafitCXXConstructAt *S) {
+  OS << "<GrafitCXXConstructAtExpr> to be implemented";
+}

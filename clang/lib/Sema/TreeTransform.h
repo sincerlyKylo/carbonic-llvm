@@ -18613,6 +18613,220 @@ ExprResult TreeTransform<Derived>::TransformHLSLOutArgExpr(HLSLOutArgExpr *E) {
   return getDerived().TransformExpr(E->getArgLValue());
 }
 
+template <typename Derived>
+ExprResult TreeTransform<Derived>::TransformGrafitCXXConstructAt(
+    GrafitCXXConstructAt *E) {
+  typedef SmallVector<Expr*, 12> ExprVector;
+
+#ifndef NDEBUG
+  llvm::errs() << "\n";
+  llvm::errs() << "========== GRAFIT TransformGrafitCXXConstructAt ==========\n";
+  llvm::errs() << "GRAFIT: input node:\n";
+  E->dump();
+
+  llvm::errs() << "GRAFIT: constructed type = "
+               << E->getConstructedType() << "\n";
+
+  llvm::errs() << "GRAFIT: has initializer = "
+               << E->hasInitializer() << "\n";
+#endif
+
+  // --------------------------------------------------------------------------
+  // Transform the constructed type.
+  // --------------------------------------------------------------------------
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [1] TransformType BEGIN\n";
+#endif
+
+  QualType TQual =
+      getDerived().TransformType(E->getConstructedType());
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [1] TransformType END\n";
+  llvm::errs() << "GRAFIT:     result = " << TQual << "\n";
+  llvm::errs() << "GRAFIT:     null   = " << TQual.isNull() << "\n";
+#endif
+
+  if (TQual.isNull()) {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: !!! TransformType FAILED !!!\n";
+    llvm::errs() << "========== GRAFIT Transform FAILED ==========\n";
+#endif
+    return ExprError();
+  }
+
+  // --------------------------------------------------------------------------
+  // Transform destination.
+  // --------------------------------------------------------------------------
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [2] TransformExpr(destination) BEGIN\n";
+#endif
+
+  ExprResult Dest =
+      getDerived().TransformExpr(E->getDestination());
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [2] TransformExpr(destination) END\n";
+  llvm::errs() << "GRAFIT:     invalid = " << Dest.isInvalid() << "\n";
+
+  if (!Dest.isInvalid()) {
+    llvm::errs() << "GRAFIT:     destination result:\n";
+    Dest.get()->dump();
+  }
+#endif
+
+  if (Dest.isInvalid()) {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: !!! destination transform FAILED !!!\n";
+    llvm::errs() << "========== GRAFIT Transform FAILED ==========\n";
+#endif
+    return ExprError();
+  }
+
+  // --------------------------------------------------------------------------
+  // Transform initializer.
+  // --------------------------------------------------------------------------
+
+  ExprResult NewInit;
+
+  if (Expr *Init = E->getInitializer()) {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [3] TransformInitializer BEGIN\n";
+    llvm::errs() << "GRAFIT:     original initializer:\n";
+    Init->dump();
+#endif
+
+    NewInit = getDerived().TransformInitializer(Init, true);
+
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [3] TransformInitializer END\n";
+    llvm::errs() << "GRAFIT:     invalid = "
+                 << NewInit.isInvalid() << "\n";
+
+    if (!NewInit.isInvalid()) {
+      llvm::errs() << "GRAFIT:     transformed initializer:\n";
+      NewInit.get()->dump();
+    }
+#endif
+  } else {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [3] no initializer\n";
+#endif
+  }
+
+  if (NewInit.isInvalid()) {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: !!! initializer transform FAILED !!!\n";
+    llvm::errs() << "========== GRAFIT Transform FAILED ==========\n";
+#endif
+    return ExprError();
+  }
+
+  Expr *Init = NewInit.get();
+
+  // --------------------------------------------------------------------------
+  // Rebuild ParenListExpr into the actual construct-at initialization.
+  // --------------------------------------------------------------------------
+
+  if (auto *PLE = dyn_cast_or_null<ParenListExpr>(Init)) {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [4] initializer is ParenListExpr\n";
+    llvm::errs() << "GRAFIT:     initializer:\n";
+    PLE->dump();
+#endif
+
+    ExprVector ConstructorArgs;
+
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [4] collecting constructor args\n";
+#endif
+
+    for (Expr *Arg : PLE->exprs()) {
+#ifndef NDEBUG
+      llvm::errs() << "GRAFIT:     argument:\n";
+      Arg->dump();
+#endif
+      ConstructorArgs.push_back(Arg);
+    }
+
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [4] BuildGrafitCXXConstructAtInit BEGIN\n";
+    llvm::errs() << "GRAFIT:     type = " << TQual << "\n";
+    llvm::errs() << "GRAFIT:     args = " << ConstructorArgs.size() << "\n";
+#endif
+
+    NewInit = SemaRef.BuildGrafitCXXConstructAtInit(
+        E->getBeginLoc(),
+        PLE->getLParenLoc(),
+        PLE->getRParenLoc(),
+        TQual,
+        ConstructorArgs);
+
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [4] BuildGrafitCXXConstructAtInit END\n";
+    llvm::errs() << "GRAFIT:     invalid = "
+                 << NewInit.isInvalid() << "\n";
+
+    if (!NewInit.isInvalid()) {
+      llvm::errs() << "GRAFIT:     rebuilt initializer:\n";
+      NewInit.get()->dump();
+    }
+#endif
+
+    if (NewInit.isInvalid()) {
+#ifndef NDEBUG
+      llvm::errs()
+          << "GRAFIT: !!! BuildGrafitCXXConstructAtInit FAILED !!!\n";
+      llvm::errs() << "========== GRAFIT Transform FAILED ==========\n";
+#endif
+      return ExprError();
+    }
+
+    Init = NewInit.get();
+  } else {
+#ifndef NDEBUG
+    llvm::errs() << "GRAFIT: [4] initializer is NOT ParenListExpr\n";
+    if (Init) {
+      llvm::errs() << "GRAFIT:     initializer:\n";
+      Init->dump();
+    } else {
+      llvm::errs() << "GRAFIT:     initializer = nullptr\n";
+    }
+#endif
+  }
+
+  // --------------------------------------------------------------------------
+  // Construct the transformed Grafit node.
+  // --------------------------------------------------------------------------
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [5] GrafitCXXConstructAt::Create BEGIN\n";
+#endif
+
+  auto Return = GrafitCXXConstructAt::Create(
+      SemaRef.Context,
+      TQual,
+      E->getBeginLoc(),
+      E->getTypeLoc(),
+      E->getEndLoc(),
+      Dest.get(),
+      Init);
+
+#ifndef NDEBUG
+  llvm::errs() << "GRAFIT: [5] GrafitCXXConstructAt::Create END\n";
+  llvm::errs() << "GRAFIT:     transformed node:\n";
+  Return->dump();
+
+  llvm::errs() << "GRAFIT: [6] SUCCESS\n";
+  llvm::errs() << "GRAFIT: finished TransformGrafitCXXConstructAt\n";
+  llvm::errs() << "============================================================\n";
+  llvm::errs() << "\n";
+#endif
+
+  return Return;
+}
 } // end namespace clang
 
 #endif // LLVM_CLANG_LIB_SEMA_TREETRANSFORM_H

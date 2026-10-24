@@ -137,6 +137,7 @@ add_clang_library(clangAST
   TypePrinter.cpp
   VTableBuilder.cpp
   VTTBuilder.cpp
+  GrafitComputeDependance.cpp
 
   PRECOMPILE_HEADERS
   [["clang/AST/pch.h"]]

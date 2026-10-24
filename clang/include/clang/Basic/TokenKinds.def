@@ -391,6 +391,7 @@ KEYWORD(typeid                      , KEYCXX)
 KEYWORD(using                       , KEYCXX)
 KEYWORD(virtual                     , KEYCXX)
 KEYWORD(wchar_t                     , WCHARSUPPORT)
+KEYWORD(__grafit_construct_at       , KEYCXX)
 
 // C++ 2.5p2: Alternative Representations.
 CXX_KEYWORD_OPERATOR(and     , ampamp)

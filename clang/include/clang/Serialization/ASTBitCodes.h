@@ -2109,6 +2109,9 @@ enum StmtCode {
   // HLSL Constructs
   EXPR_HLSL_OUT_ARG,
 
+  //Grafit
+  EXPR_GRAFIT_CXX_CONSTRUCT_AT,
+
   STMT_DEFER,
 };
 

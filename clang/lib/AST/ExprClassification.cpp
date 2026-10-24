@@ -501,6 +501,8 @@ static Cl::Kinds ClassifyInternal(ASTContext &Ctx, const Expr *E) {
     if (isa<ArrayType>(E->getType()))
       return Cl::CL_ArrayTemporary;
     return Cl::CL_ClassTemporary;
+   case Expr::GrafitCXXConstructAtClass:
+    return Cl::CL_PRValue;
   }
 
   llvm_unreachable("unhandled expression kind in classification");

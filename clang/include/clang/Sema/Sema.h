@@ -16033,6 +16033,23 @@ public:
 
   std::optional<uint64_t>
   ComputeExpansionSize(CXXExpansionStmtPattern *Expansion);
+
+  typedef SmallVector<Expr *, 12> ExprVector;
+  ExprResult ActOnGrafitExtensionCXXConstructAt(SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation EndLoc,
+                                Declarator& D,
+                                ExprVector& Exprs);
+
+  ExprResult BuildGrafitExtensionCXXConstructAt(SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation EndLoc,
+                                Declarator& D,
+                                Expr& Destination,
+                                ExprVector& ConstructorArgs);
+  //TreeTransform helper
+  ExprResult BuildGrafitCXXConstructAtInit(
+    SourceLocation StartLoc,
+    SourceLocation LParenLoc,
+    SourceLocation EndLoc,
+    QualType TQual,
+    ExprVector &ConstructorArgs);
   ///@}
 };
 

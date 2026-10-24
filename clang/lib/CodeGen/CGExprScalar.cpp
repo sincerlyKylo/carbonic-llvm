@@ -1032,6 +1032,9 @@ public:
   Value *VisitPackIndexingExpr(PackIndexingExpr *E) {
     return Visit(E->getSelectedExpr());
   }
+  Value* VisitGrafitCXXConstructAt(const GrafitCXXConstructAt *E) {
+    return CGF.EmitGrafitCXXConstructAt(E);
+  }
 };
 }  // end anonymous namespace.
 

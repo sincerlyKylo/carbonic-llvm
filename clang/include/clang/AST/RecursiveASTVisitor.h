@@ -4369,6 +4369,8 @@ DEF_TRAVERSE_STMT(OpenACCCacheConstruct, {
 
 // Traverse HLSL: Out argument expression
 DEF_TRAVERSE_STMT(HLSLOutArgExpr, {})
+  //Traverse C++ Grafit Extensions
+DEF_TRAVERSE_STMT(GrafitCXXConstructAt, {})
 
 // FIXME: look at the following tricky-seeming exprs to see if we
 // need to recurse on anything.  These are ones that have methods

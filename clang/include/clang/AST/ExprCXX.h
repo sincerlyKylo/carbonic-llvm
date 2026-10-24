@@ -5659,6 +5659,100 @@ public:
     return T->getStmtClass() == CXXExpansionSelectExprClass;
   }
 };
+
+class GrafitCXXConstructAt final : public Expr  {
+  friend class ASTStmtReader;
+  private:
+  clang::SourceLocation OpLocation;
+  clang::SourceLocation TLocation;
+  clang::SourceLocation DestLocation;
+  clang::SourceLocation EndLocation;
+
+  enum { DestIdx = 0, InitialiserIdx = 1 };
+  QualType ConstructedType;
+  Stmt* Children[2];
+public:
+  GrafitCXXConstructAt(const ASTContext &C, const QualType Ty,
+                       const SourceLocation OpLoc, const SourceLocation TLoc, const SourceLocation DestLoc, const SourceLocation EndLoc,
+                       clang::Expr *Dest, Expr* Initialiser)
+
+      : Expr(StmtClass::GrafitCXXConstructAtClass, C.getPointerType(Ty), clang::VK_PRValue, clang::OK_Ordinary),
+        OpLocation(OpLoc), TLocation(TLoc), DestLocation(DestLoc), EndLocation(EndLoc) {
+    Children[DestIdx] = Dest;
+    Children[InitialiserIdx] = Initialiser;
+    ConstructedType = Ty;
+    setDependence(computeDependence(this));
+  }
+
+  static GrafitCXXConstructAt *Create(const clang::ASTContext &C, clang::QualType Ty,
+                                      clang::SourceLocation OpLoc, clang::SourceLocation TL, SourceLocation EndLoc,
+                                      clang::Expr *Dest, Expr* Init) {
+    return new (C) GrafitCXXConstructAt(C, Ty, OpLoc, TL, Dest->getBeginLoc(), EndLoc, Dest, Init);
+  }
+
+  static GrafitCXXConstructAt *CreateEmpty(const clang::ASTContext &C) {
+    return new (C) GrafitCXXConstructAt(EmptyShell());
+  }
+
+  explicit GrafitCXXConstructAt(EmptyShell Shell)
+      : Expr(StmtClass::GrafitCXXConstructAtClass, Shell) {
+    Children[DestIdx] = nullptr;
+    Children[InitialiserIdx] = nullptr;
+  }
+
+  clang::Expr *getDestination() const {
+    return llvm::cast<clang::Expr>(Children[DestIdx]);
+  }
+
+  QualType getConstructedType() const {
+    return ConstructedType;
+  }
+
+  Expr *getInitializer() const {
+    return llvm::dyn_cast_or_null<Expr>(Children[InitialiserIdx]);
+  }
+
+  CXXConstructExpr* getConstructor() const {
+    if (!hasInitializer()) return nullptr;
+    return dyn_cast_or_null<CXXConstructExpr>(Children[InitialiserIdx]);
+  }
+  ImplicitCastExpr* getImplicitCast() const {
+    if (!hasInitializer()) return nullptr;
+    return dyn_cast_or_null<ImplicitCastExpr>(Children[InitialiserIdx]);
+  }
+
+  bool hasInitializer() const {
+    return Children[InitialiserIdx] != nullptr;
+  }
+  bool hasConstructorExpr() const {
+    return hasInitializer() && isa<CXXConstructExpr>(Children[InitialiserIdx]);
+  }
+  bool hasImplicitCast() const {
+    return hasInitializer() && isa<ImplicitCastExpr>(Children[InitialiserIdx]);
+  }
+
+  CXXConstructExpr *getConstructorExpr() const;
+
+  clang::SourceLocation getBeginLoc() const LLVM_READONLY { return OpLocation; }
+  clang::SourceLocation getEndLoc() const LLVM_READONLY { return TLocation; }
+  clang::SourceLocation getDestLoc() const LLVM_READONLY { return DestLocation; }
+  clang::SourceLocation getTypeLoc() const LLVM_READONLY { return TLocation; }
+
+
+  static bool classof(const clang::Stmt *T) {
+    return T->getStmtClass() == GrafitCXXConstructAtClass;
+  }
+
+  child_range children() {
+    if (hasInitializer()) return child_range(&Children[0], &Children[0] + 2);
+    return child_range(&Children[0], &Children[0] + 1);
+  }
+
+  const_child_range children() const {
+    if (hasInitializer()) return const_child_range(&Children[0], &Children[0] + 2);
+    return const_child_range(&Children[0], &Children[0] + 1);
+  }
+};
 } // namespace clang
 
 #endif // LLVM_CLANG_AST_EXPRCXX_H

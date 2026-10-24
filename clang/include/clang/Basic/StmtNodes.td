@@ -355,3 +355,6 @@ def OpenACCAsteriskSizeExpr : StmtNode<Expr>;
 
 // HLSL Constructs.
 def HLSLOutArgExpr : StmtNode<Expr>;
+
+//Grafit Extensions
+def GrafitCXXConstructAt : StmtNode<Expr>;

@@ -1598,6 +1598,10 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
       break;
     }
     [[fallthrough]];
+  case tok::kw___grafit_construct_at:
+    Res = ParseGrafitCXXConstructAtExpression(Tok.getLocation());
+    AllowSuffix = false;
+    break;
   default:
   ExpectedExpression:
     NotCastExpr = true;

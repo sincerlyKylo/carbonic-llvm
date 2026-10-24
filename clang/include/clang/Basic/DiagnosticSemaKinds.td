@@ -14520,4 +14520,19 @@ def err_cuda_device_kernel_launch_not_supported
 def err_cuda_device_kernel_launch_require_rdc
     : Error<"kernel launch from __device__ or __global__ function requires "
             "relocatable device code (i.e. requires -fgpu-rdc)">;
+
+def err_grafit_construct_at_array_type : Error<
+  "'construct_at<T>(ptr, ...)' can only construct a single instance">;
+def err_grafit_construct_at_insufficient_args : Error<
+  "'construct_at<T>(ptr, ...)' requires at least one argument, but none were provided">;
+def err_grafit_construct_at_arg_not_pointer : Error<
+  "first argument for 'construct_at<T>(ptr, ...)' is not a pointer">;
+def err_grafit_construct_at_incompatible_type : Error<
+  "provided type cannot be constructed by 'construct_at<T>(ptr, ...)' %0">;
+def err_grafit_construct_at_reference_type : Error<
+  "'construct_at<T>(ptr, ...)' cannot construct reference type %0">;
+def err_grafit_construct_at_function_type : Error<
+  "'construct_at<T>(ptr, ...)' cannot construct function type %0">;
+def err_grafit_construct_at_incomplete_type : Error<
+  "type %0 for expression 'construct_at<T>(ptr, ...)' cannot be incomplete">;
 } // end of sema component.
