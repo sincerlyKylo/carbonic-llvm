@@ -351,7 +351,8 @@ public:
     Firmware,
     QURT,
     H2,
-    LastOSType = H2
+    Hilon,
+    LastOSType = Hilon
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -429,6 +430,7 @@ public:
     SPIRV,
     Wasm,
     XCOFF,
+    CEX
   };
 
 private:
@@ -921,6 +923,11 @@ public:
 
     return Version < VersionTuple(Major);
   }
+
+  bool isOSHilon() const {return getOS() == Triple::Hilon; }
+
+  bool isCEX() const {return getObjectFormat() == Triple::CEX; }
+
 
   /// Tests whether the environment is mlibc.
   bool isMlibc() const { return getEnvironment() == Triple::Mlibc; }
